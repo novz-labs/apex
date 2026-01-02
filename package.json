@@ -2,14 +2,21 @@
   "name": "apex",
   "version": "1.0.50",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "bun run --watch src/index.ts"
+    "dev": "bun run --watch src/index.ts",
+    "db:gen": "prisma generate",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio"
   },
   "dependencies": {
-    "elysia": "latest"
+    "@prisma/client": "^7.2.0",
+    "elysia": "latest",
+    "elysia-rate-limit": "^4.4.2",
+    "prismabox": "^1.1.26"
   },
   "devDependencies": {
-    "bun-types": "latest"
+    "@prisma/adapter-libsql": "^7.2.0",
+    "bun-types": "latest",
+    "prisma": "^7.2.0"
   },
   "module": "src/index.js"
 }

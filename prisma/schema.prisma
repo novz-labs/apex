@@ -1,0 +1,194 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ============================================
+// 전략 (Strategy)
+// ============================================
+model Strategy {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  type          String   // grid_bot, momentum, scalping, funding_arb
+  enabled       Boolean  @default(false)
+  allocation    Float    @default(0) // 자본 배분 비율 (0-1)
+  paramsJson    String   @default("{}") // 전략별 파라미터 JSON
+  winRate       Float    @default(0)
+  profitFactor  Float    @default(0)
+  totalPnl      Float    @default(0)
+  totalTrades   Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  trades        Trade[]
+  paramHistory  StrategyParamHistory[]
+}
+
+// ============================================
+// 거래 (Trade)
+// ============================================
+model Trade {
+  id             String   @id @default(cuid())
+  symbol         String
+  side           String   // long, short
+  entryPrice     Float
+  exitPrice      Float?
+  size           Float
+  leverage       Float    @default(1)
+  pnl            Float?
+  pnlPercent     Float?
+  exitReason     String?  // tp, sl, trailing_stop, manual, liquidation
+  status         String   @default("open") // open, closed
+  indicatorsJson String   @default("{}") // 진입 시 지표 스냅샷
+  entryTime      DateTime @default(now())
+  exitTime       DateTime?
+  
+  strategyId     String
+  strategy       Strategy @relation(fields: [strategyId], references: [id])
+
+  @@index([symbol])
+  @@index([strategyId])
+  @@index([status])
+  @@index([entryTime])
+}
+
+// ============================================
+// 전략 파라미터 변경 이력
+// ============================================
+model StrategyParamHistory {
+  id             String   @id @default(cuid())
+  previousParams String   // JSON
+  newParams      String   // JSON
+  changeReason   String
+  source         String   // ai, manual
+  aiConfidence   Float?
+  createdAt      DateTime @default(now())
+  
+  strategyId     String
+  strategy       Strategy @relation(fields: [strategyId], references: [id])
+
+  @@index([strategyId])
+  @@index([createdAt])
+}
+
+// ============================================
+// AI 분석 로그
+// ============================================
+model AIAnalysis {
+  id              String   @id @default(cuid())
+  triggerType     String   // trade_count, consecutive_loss, drawdown, manual
+  inputContext    String   // AI에게 제공한 컨텍스트 JSON
+  analysisText    String   // AI 응답 원문
+  confidence      Float
+  riskLevel       String   // low, medium, high, critical
+  recommendations String   // 추천사항 JSON 배열
+  appliedCount    Int      @default(0) // 적용된 추천 수
+  skippedCount    Int      @default(0) // 스킵된 추천 수
+  inputTokens     Int      @default(0)
+  outputTokens    Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@index([triggerType])
+  @@index([createdAt])
+}
+
+// ============================================
+// 전역 설정
+// ============================================
+model GlobalConfig {
+  id               String   @id @default("default")
+  initialBalance   Float    @default(1000)
+  currentBalance   Float    @default(1000)
+  peakBalance      Float    @default(1000)
+  maxDrawdownLimit Float    @default(30) // 최대 허용 드로다운 %
+  maxLeverage      Int      @default(5)
+  maxPositionSize  Float    @default(40) // 최대 포지션 크기 %
+  stopLossDefault  Float    @default(2) // 기본 손절 %
+  
+  // AI 설정
+  aiEnabled        Boolean  @default(true)
+  aiMinInterval    Int      @default(60) // 분석 최소 간격 (분)
+  aiAutoApply      Boolean  @default(true) // 자동 적용 여부
+  aiMaxChangeRate  Float    @default(20) // 최대 변경률 %
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// ============================================
+// 계정 스냅샷 (일일)
+// ============================================
+model AccountSnapshot {
+  id            String   @id @default(cuid())
+  date          DateTime @unique // 날짜 (00:00 기준)
+  balance       Float
+  equity        Float
+  dailyPnl      Float
+  dailyPnlPercent Float
+  drawdown      Float    // 고점 대비 드로다운 %
+  winRate       Float
+  totalTrades   Int
+  openPositions Int
+  createdAt     DateTime @default(now())
+
+  @@index([date])
+}
+
+// ============================================
+// 캔들 캐시
+// ============================================
+model CandleCache {
+  id         String   @id @default(cuid())
+  symbol     String
+  timeframe  String   // 1m, 5m, 15m, 1h, 4h, 1d
+  openTime   DateTime
+  open       Float
+  high       Float
+  low        Float
+  close      Float
+  volume     Float
+  createdAt  DateTime @default(now())
+
+  @@unique([symbol, timeframe, openTime])
+  @@index([symbol, timeframe])
+  @@index([openTime])
+}
+
+// ============================================
+// 센티먼트 데이터
+// ============================================
+model SentimentData {
+  id               String   @id @default(cuid())
+  fearGreedIndex   Int      // 0-100
+  fearGreedClass   String   // Extreme Fear, Fear, Neutral, Greed, Extreme Greed
+  googleTrendsBtc  Float?   // 0-100
+  sentimentScore   Float    // 종합 점수 0-100
+  marketPhase      String   // accumulate, hold, reduce, exit
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ============================================
+// 외부 데이터 캐시 (DeFiLlama, CoinGecko 등)
+// ============================================
+model ExternalDataCache {
+  id        String   @id @default(cuid())
+  source    String   // coingecko, defillama, alternative_me
+  dataType  String   // price, tvl, funding_rate 등
+  key       String   // symbol or protocol name
+  dataJson  String   // 캐시된 데이터 JSON
+  expiresAt DateTime // 만료 시간
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([source, dataType, key])
+  @@index([expiresAt])
+}
