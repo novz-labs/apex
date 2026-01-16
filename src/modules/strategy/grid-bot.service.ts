@@ -328,14 +328,16 @@ export class GridBotStrategy {
     return this.realizedPnL + this.unrealizedPnL;
   }
 
-  getStats(): GridStats {
+  getStats(): any {
     const totalTrades = this.filledBuys + this.filledSells;
     const winTrades = this.grids.filter(
       (g) => g.status === "filled" && g.pnl && g.pnl > 0
     ).length;
 
     return {
+      totalTrades,
       totalPnL: this.getTotalPnL(),
+      pnl: this.getTotalPnL(),
       realizedPnL: this.realizedPnL,
       unrealizedPnL: this.unrealizedPnL,
       filledBuys: this.filledBuys,

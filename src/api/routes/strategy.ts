@@ -1,29 +1,12 @@
 // src/api/routes/strategy.ts
-import { Elysia, t } from "elysia";
-import {
-  GridBotStrategy,
-  createGridBot,
-  type GridConfig,
-} from "../../modules/strategy/grid-bot.service";
+import { GridBotStrategy, type GridConfig } from "@strategy/grid-bot.service";
 import {
   DEFAULT_MOMENTUM_CONFIG,
-  MomentumStrategy,
-  createMomentumStrategy,
   type MomentumConfig,
-} from "../../modules/strategy/momentum.service";
+} from "@strategy/momentum.service";
+import { Elysia, t } from "elysia";
 
-// ============================================
-// 전략 인스턴스 저장소
-// ============================================
-
-interface StrategyInstance {
-  id: string;
-  type: "grid_bot" | "momentum";
-  strategy: GridBotStrategy | MomentumStrategy;
-  createdAt: Date;
-}
-
-const strategyStore = new Map<string, StrategyInstance>();
+import { strategyService } from "@strategy/strategy.service";
 
 // ============================================
 // 스키마 정의
@@ -88,15 +71,12 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
   // ============================================
   .get(
     "/",
-    () => {
-      const strategies = Array.from(strategyStore.values()).map((s) => ({
+    async () => {
+      const strategies = strategyService.getAllStrategies().map((s) => ({
         id: s.id,
+        name: s.name,
         type: s.type,
-        createdAt: s.createdAt.toISOString(),
-        isRunning:
-          s.type === "grid_bot"
-            ? (s.strategy as GridBotStrategy).getStats().isRunning
-            : (s.strategy as MomentumStrategy).getStats().isRunning,
+        isRunning: s.enabled,
       }));
       return { strategies, count: strategies.length };
     },
@@ -104,7 +84,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
       detail: {
         tags: ["Strategy"],
         summary: "전략 목록 조회",
-        description: "생성된 모든 전략 인스턴스 목록",
+        description: "DB에 저장된 모든 전략 목록",
       },
     }
   )
@@ -114,26 +94,23 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
   // ============================================
   .post(
     "/grid-bot",
-    ({ body }) => {
+    async ({ body }) => {
       const config: GridConfig = body;
-      const strategy = createGridBot(config);
-      const id = `grid_${Date.now()}`;
+      const name = `GridBot_${body.symbol}_${Date.now()}`;
+      const dbEntry = await strategyService.createStrategy(
+        name,
+        "grid_bot",
+        config
+      );
 
-      strategyStore.set(id, {
-        id,
-        type: "grid_bot",
-        strategy,
-        createdAt: new Date(),
-      });
-
-      // 그리드 초기화
-      const grids = strategy.initializeGrids();
+      const instance = strategyService.getStrategy(dbEntry.id)!;
+      (instance.strategy as GridBotStrategy).initializeGrids();
 
       return {
-        id,
+        id: dbEntry.id,
+        name: dbEntry.name,
         type: "grid_bot",
         config,
-        gridsCount: grids.length,
         message: "Grid Bot strategy created and initialized",
       };
     },
@@ -142,7 +119,6 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
       detail: {
         tags: ["Strategy"],
         summary: "Grid Bot 전략 생성",
-        description: "새로운 Grid Bot 전략 인스턴스 생성",
       },
     }
   )
@@ -152,29 +128,25 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
   // ============================================
   .post(
     "/momentum",
-    ({ body }) => {
+    async ({ body }) => {
       const config: MomentumConfig = {
         ...DEFAULT_MOMENTUM_CONFIG,
         ...body,
       } as MomentumConfig;
 
-      const strategy = createMomentumStrategy(config);
-      const id = `momentum_${Date.now()}`;
-
-      strategyStore.set(id, {
-        id,
-        type: "momentum",
-        strategy,
-        createdAt: new Date(),
-      });
-
-      strategy.start();
+      const name = `Momentum_${body.symbol}_${Date.now()}`;
+      const dbEntry = await strategyService.createStrategy(
+        name,
+        "momentum",
+        config
+      );
 
       return {
-        id,
+        id: dbEntry.id,
+        name: dbEntry.name,
         type: "momentum",
         config,
-        message: "Momentum strategy created and started",
+        message: "Momentum strategy created",
       };
     },
     {
@@ -182,7 +154,6 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
       detail: {
         tags: ["Strategy"],
         summary: "Momentum 전략 생성",
-        description: "새로운 Momentum 전략 인스턴스 생성",
       },
     }
   )
@@ -193,26 +164,20 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
   .get(
     "/:id",
     ({ params, set }) => {
-      const instance = strategyStore.get(params.id);
+      const instance = strategyService.getStrategy(params.id);
       if (!instance) {
         set.status = 404;
         return { message: "Strategy not found" };
       }
 
-      const stats =
-        instance.type === "grid_bot"
-          ? (instance.strategy as GridBotStrategy).getStats()
-          : (instance.strategy as MomentumStrategy).getStats();
-
-      const config =
-        instance.type === "grid_bot"
-          ? (instance.strategy as GridBotStrategy).getConfig()
-          : (instance.strategy as MomentumStrategy).getConfig();
+      const stats = instance.strategy.getStats();
+      const config = instance.strategy.getConfig();
 
       return {
         id: instance.id,
+        name: instance.name,
         type: instance.type,
-        createdAt: instance.createdAt.toISOString(),
+        enabled: instance.enabled,
         config,
         stats,
       };
@@ -222,7 +187,6 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
       detail: {
         tags: ["Strategy"],
         summary: "전략 상세 조회",
-        description: "전략 설정 및 통계 조회",
       },
     }
   )
@@ -232,95 +196,63 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
   // ============================================
   .post(
     "/:id/start",
-    ({ params, set }) => {
-      const instance = strategyStore.get(params.id);
-      if (!instance) {
+    async ({ params, set }) => {
+      try {
+        await strategyService.toggleStrategy(params.id, true);
+        return { id: params.id, action: "started" };
+      } catch (e: any) {
         set.status = 404;
-        return { message: "Strategy not found" };
+        return { message: e.message };
       }
-
-      if (instance.type === "grid_bot") {
-        (instance.strategy as GridBotStrategy).start();
-      } else {
-        (instance.strategy as MomentumStrategy).start();
-      }
-
-      return { id: params.id, action: "started" };
     },
     {
       params: t.Object({ id: t.String() }),
       detail: {
         tags: ["Strategy"],
         summary: "전략 시작",
-        description: "전략 실행 시작",
       },
     }
   )
 
   .post(
     "/:id/stop",
-    ({ params, set }) => {
-      const instance = strategyStore.get(params.id);
-      if (!instance) {
+    async ({ params, set }) => {
+      try {
+        await strategyService.toggleStrategy(params.id, false);
+        return { id: params.id, action: "stopped" };
+      } catch (e: any) {
         set.status = 404;
-        return { message: "Strategy not found" };
+        return { message: e.message };
       }
-
-      if (instance.type === "grid_bot") {
-        (instance.strategy as GridBotStrategy).stop();
-      } else {
-        (instance.strategy as MomentumStrategy).stop();
-      }
-
-      return { id: params.id, action: "stopped" };
     },
     {
       params: t.Object({ id: t.String() }),
       detail: {
         tags: ["Strategy"],
         summary: "전략 중지",
-        description: "전략 실행 중지",
       },
     }
   )
 
   // ============================================
-  // Grid Bot 가격 업데이트
+  // 전략 가격 업데이트
   // ============================================
   .post(
     "/:id/price-update",
     ({ params, body, set }) => {
-      const instance = strategyStore.get(params.id);
+      const instance = strategyService.getStrategy(params.id);
       if (!instance) {
         set.status = 404;
         return { message: "Strategy not found" };
       }
 
-      if (instance.type === "grid_bot") {
-        const result = (instance.strategy as GridBotStrategy).onPriceUpdate(
-          body.currentPrice
-        );
-        return {
-          id: params.id,
-          type: "grid_bot",
-          executedOrders: result.executedOrders.length,
-          shouldRebalance: result.shouldRebalance,
-          stopLossTriggered: result.stopLossTriggered,
-          stats: (instance.strategy as GridBotStrategy).getStats(),
-        };
-      } else {
-        const result = (instance.strategy as MomentumStrategy).onPriceUpdate(
-          body.currentPrice
-        );
-        return {
-          id: params.id,
-          type: "momentum",
-          action: result.action,
-          closedPnl: result.closedPnl,
-          position: result.position,
-          stats: (instance.strategy as MomentumStrategy).getStats(),
-        };
-      }
+      const result = instance.strategy.onPriceUpdate(body.currentPrice);
+      return {
+        id: params.id,
+        type: instance.type,
+        result,
+        stats: instance.strategy.getStats(),
+      };
     },
     {
       params: t.Object({ id: t.String() }),
@@ -328,106 +260,6 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
       detail: {
         tags: ["Strategy"],
         summary: "가격 업데이트",
-        description: "현재 가격으로 전략 상태 업데이트",
-      },
-    }
-  )
-
-  // ============================================
-  // Momentum 시그널 생성
-  // ============================================
-  .post(
-    "/:id/generate-signal",
-    ({ params, body, set }) => {
-      const instance = strategyStore.get(params.id);
-      if (!instance) {
-        set.status = 404;
-        return { message: "Strategy not found" };
-      }
-
-      if (instance.type !== "momentum") {
-        set.status = 400;
-        return { message: "This endpoint is only for Momentum strategy" };
-      }
-
-      const signal = (instance.strategy as MomentumStrategy).generateSignal(
-        body.indicators,
-        body.currentPrice
-      );
-
-      return {
-        id: params.id,
-        signal,
-      };
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      body: t.Object({
-        indicators: IndicatorSnapshotSchema,
-        currentPrice: t.Number(),
-      }),
-      detail: {
-        tags: ["Strategy"],
-        summary: "Momentum 시그널 생성",
-        description: "지표를 기반으로 매매 시그널 생성",
-      },
-    }
-  )
-
-  // ============================================
-  // Momentum 포지션 오픈
-  // ============================================
-  .post(
-    "/:id/open-position",
-    ({ params, body, set }) => {
-      const instance = strategyStore.get(params.id);
-      if (!instance) {
-        set.status = 404;
-        return { message: "Strategy not found" };
-      }
-
-      if (instance.type !== "momentum") {
-        set.status = 400;
-        return { message: "This endpoint is only for Momentum strategy" };
-      }
-
-      const strategy = instance.strategy as MomentumStrategy;
-
-      // 먼저 시그널 생성
-      const signal = strategy.generateSignal(
-        body.indicators,
-        body.currentPrice
-      );
-
-      if (signal.direction === "none") {
-        return {
-          id: params.id,
-          opened: false,
-          signal,
-          message: "No signal generated",
-        };
-      }
-
-      // 포지션 오픈
-      const position = strategy.openPosition(signal);
-
-      return {
-        id: params.id,
-        opened: !!position,
-        signal,
-        position,
-      };
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      body: t.Object({
-        indicators: IndicatorSnapshotSchema,
-        currentPrice: t.Number(),
-      }),
-      detail: {
-        tags: ["Strategy"],
-        summary: "Momentum 포지션 오픈",
-        description: "시그널을 기반으로 포지션 진입",
       },
     }
   )
@@ -437,30 +269,20 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
   // ============================================
   .delete(
     "/:id",
-    ({ params, set }) => {
-      const instance = strategyStore.get(params.id);
-      if (!instance) {
+    async ({ params, set }) => {
+      try {
+        await strategyService.deleteStrategy(params.id);
+        return { id: params.id, action: "deleted" };
+      } catch (e: any) {
         set.status = 404;
-        return { message: "Strategy not found" };
+        return { message: e.message };
       }
-
-      // 전략 중지
-      if (instance.type === "grid_bot") {
-        (instance.strategy as GridBotStrategy).stop();
-      } else {
-        (instance.strategy as MomentumStrategy).stop();
-      }
-
-      strategyStore.delete(params.id);
-
-      return { id: params.id, action: "deleted" };
     },
     {
       params: t.Object({ id: t.String() }),
       detail: {
         tags: ["Strategy"],
         summary: "전략 삭제",
-        description: "전략 인스턴스 삭제",
       },
     }
   );

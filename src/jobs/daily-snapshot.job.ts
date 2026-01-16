@@ -1,28 +1,15 @@
-// src/jobs/daily-snapshot.job.ts
+import { prisma } from "@db/prisma";
 
-/**
- * 일일 스냅샷 Job
- * - 계정 잔고 기록
- * - 일일 PnL 계산
- * - 성과 통계 저장
- */
-
-interface DailySnapshot {
+export interface DailySnapshot {
   date: string;
   balance: number;
+  equity: number;
   dailyPnl: number;
   dailyPnlPercent: number;
   totalTrades: number;
-  winCount: number;
-  lossCount: number;
   winRate: number;
   drawdown: number;
 }
-
-// 인메모리 스냅샷 저장소
-const snapshots: DailySnapshot[] = [];
-let peakBalance = 1000; // 초기 자본
-let currentBalance = 1000;
 
 /**
  * 일일 스냅샷 실행
@@ -30,71 +17,132 @@ let currentBalance = 1000;
 export async function runDailySnapshot(): Promise<void> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const dateStr = today.toISOString().split("T")[0];
 
-  // 이미 오늘 스냅샷이 있으면 업데이트
-  const existingIndex = snapshots.findIndex((s) => s.date === dateStr);
-
-  // 임시: 랜덤 일일 PnL 시뮬레이션 (실제로는 거래 기록에서 계산)
-  const dailyPnl = (Math.random() - 0.4) * 50; // -$20 ~ $30
-  currentBalance += dailyPnl;
-
-  // 피크 업데이트
-  if (currentBalance > peakBalance) {
-    peakBalance = currentBalance;
+  // 현재 글로벌 설정 로드
+  let config = await prisma.globalConfig.findUnique({
+    where: { id: "default" },
+  });
+  if (!config) {
+    config = await prisma.globalConfig.create({
+      data: {
+        id: "default",
+        initialBalance: 1000,
+        currentBalance: 1000,
+        peakBalance: 1000,
+      },
+    });
   }
 
-  // 드로다운 계산
+  // 오늘 날짜의 거래 기록에서 통계 계산
+  const tradesToday = await prisma.trade.findMany({
+    where: {
+      exitTime: {
+        gte: today,
+      },
+      status: "closed",
+    },
+  });
+
+  const dailyPnl = tradesToday.reduce(
+    (sum: number, t: any) => sum + (t.pnl || 0),
+    0
+  );
+  const winCount = tradesToday.filter((t: any) => (t.pnl || 0) > 0).length;
+  const winRate = tradesToday.length > 0 ? winCount / tradesToday.length : 0;
+
+  const currentBalance = config.currentBalance + dailyPnl;
+  const peakBalance = Math.max(config.peakBalance, currentBalance);
   const drawdown =
     peakBalance > 0 ? ((peakBalance - currentBalance) / peakBalance) * 100 : 0;
 
-  const snapshot: DailySnapshot = {
-    date: dateStr,
-    balance: currentBalance,
-    dailyPnl,
-    dailyPnlPercent: (dailyPnl / (currentBalance - dailyPnl)) * 100,
-    totalTrades: Math.floor(Math.random() * 10) + 1, // 임시
-    winCount: Math.floor(Math.random() * 7),
-    lossCount: Math.floor(Math.random() * 5),
-    winRate: 0,
-    drawdown,
-  };
-
-  snapshot.winRate =
-    snapshot.totalTrades > 0 ? snapshot.winCount / snapshot.totalTrades : 0;
-
-  if (existingIndex >= 0) {
-    snapshots[existingIndex] = snapshot;
-  } else {
-    snapshots.push(snapshot);
-  }
+  // DB 업데이트
+  await prisma.$transaction([
+    prisma.globalConfig.update({
+      where: { id: "default" },
+      data: {
+        currentBalance,
+        peakBalance,
+      },
+    }),
+    prisma.accountSnapshot.upsert({
+      where: { date: today },
+      update: {
+        balance: currentBalance,
+        equity: currentBalance, // 단순화
+        dailyPnl,
+        dailyPnlPercent:
+          config.currentBalance > 0
+            ? (dailyPnl / config.currentBalance) * 100
+            : 0,
+        winRate,
+        totalTrades: tradesToday.length,
+        drawdown,
+      },
+      create: {
+        date: today,
+        balance: currentBalance,
+        equity: currentBalance,
+        dailyPnl,
+        dailyPnlPercent:
+          config.currentBalance > 0
+            ? (dailyPnl / config.currentBalance) * 100
+            : 0,
+        winRate,
+        totalTrades: tradesToday.length,
+        drawdown,
+        openPositions: 0, // 추후 구현
+      },
+    }),
+  ]);
 
   console.log(
-    `📸 Daily snapshot: $${currentBalance.toFixed(2)} (${dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}) DD: ${drawdown.toFixed(1)}%`
+    `📸 Daily snapshot saved: $${currentBalance.toFixed(2)} (${dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}) DD: ${drawdown.toFixed(1)}%`
   );
 }
 
 /**
  * 스냅샷 히스토리 조회
  */
-export function getSnapshots(limit?: number): DailySnapshot[] {
-  if (limit) {
-    return snapshots.slice(-limit);
-  }
-  return [...snapshots];
+export async function getSnapshots(
+  limit: number = 30
+): Promise<DailySnapshot[]> {
+  const data = await prisma.accountSnapshot.findMany({
+    orderBy: { date: "desc" },
+    take: limit,
+  });
+
+  return data.map((s: AccountSnapshot) => ({
+    date: s.date.toISOString().split("T")[0],
+    balance: s.balance,
+    equity: s.equity,
+    dailyPnl: s.dailyPnl,
+    dailyPnlPercent: s.dailyPnlPercent,
+    totalTrades: s.totalTrades,
+    winRate: s.winRate,
+    drawdown: s.drawdown,
+  }));
 }
 
 /**
  * 현재 계정 상태 조회
  */
-export function getAccountStatus(): {
-  currentBalance: number;
-  peakBalance: number;
-  drawdown: number;
-  totalPnl: number;
-  totalPnlPercent: number;
-} {
-  const initialBalance = 1000;
+export async function getAccountStatus() {
+  let config = await prisma.globalConfig.findUnique({
+    where: { id: "default" },
+  });
+  if (!config) {
+    return {
+      currentBalance: 1000,
+      peakBalance: 1000,
+      drawdown: 0,
+      totalPnl: 0,
+      totalPnlPercent: 0,
+    };
+  }
+
+  const initialBalance = config.initialBalance;
+  const currentBalance = config.currentBalance;
+  const peakBalance = config.peakBalance;
   const totalPnl = currentBalance - initialBalance;
 
   return {
@@ -105,61 +153,6 @@ export function getAccountStatus(): {
         ? ((peakBalance - currentBalance) / peakBalance) * 100
         : 0,
     totalPnl,
-    totalPnlPercent: (totalPnl / initialBalance) * 100,
+    totalPnlPercent: initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0,
   };
-}
-
-/**
- * 성과 요약 조회
- */
-export function getPerformanceSummary(days = 30): {
-  totalDays: number;
-  totalPnl: number;
-  averageDailyPnl: number;
-  bestDay: DailySnapshot | null;
-  worstDay: DailySnapshot | null;
-  winningDays: number;
-  losingDays: number;
-} {
-  const recentSnapshots = snapshots.slice(-days);
-
-  if (recentSnapshots.length === 0) {
-    return {
-      totalDays: 0,
-      totalPnl: 0,
-      averageDailyPnl: 0,
-      bestDay: null,
-      worstDay: null,
-      winningDays: 0,
-      losingDays: 0,
-    };
-  }
-
-  const totalPnl = recentSnapshots.reduce((sum, s) => sum + s.dailyPnl, 0);
-  const winningDays = recentSnapshots.filter((s) => s.dailyPnl > 0).length;
-  const losingDays = recentSnapshots.filter((s) => s.dailyPnl < 0).length;
-
-  const sortedByPnl = [...recentSnapshots].sort(
-    (a, b) => b.dailyPnl - a.dailyPnl
-  );
-
-  return {
-    totalDays: recentSnapshots.length,
-    totalPnl,
-    averageDailyPnl: totalPnl / recentSnapshots.length,
-    bestDay: sortedByPnl[0] || null,
-    worstDay: sortedByPnl[sortedByPnl.length - 1] || null,
-    winningDays,
-    losingDays,
-  };
-}
-
-/**
- * 잔고 수동 설정 (테스트용)
- */
-export function setBalance(balance: number): void {
-  currentBalance = balance;
-  if (balance > peakBalance) {
-    peakBalance = balance;
-  }
 }

@@ -85,6 +85,10 @@ console.log(`📚 Swagger UI: http://localhost:3000/swagger`);
 // 스케줄러 시작
 initializeJobs();
 
+// 전략 로드
+import { strategyService } from "@strategy/strategy.service";
+await strategyService.loadStrategies();
+
 // AI 서비스 초기화
 aiService.initialize();
 

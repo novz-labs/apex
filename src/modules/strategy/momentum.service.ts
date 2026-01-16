@@ -70,10 +70,13 @@ export interface MomentumPosition {
 }
 
 export interface MomentumStats {
+  pnl: number;
   totalPnL: number;
   realizedPnL: number;
   unrealizedPnL: number;
   totalTrades: number;
+  wins: number;
+  losses: number;
   winCount: number;
   lossCount: number;
   winRate: number;
@@ -449,10 +452,13 @@ export class MomentumStrategy {
     const unrealizedPnL = this.currentPosition?.unrealizedPnl || 0;
 
     return {
+      pnl: this.realizedPnL + unrealizedPnL,
       totalPnL: this.realizedPnL + unrealizedPnL,
       realizedPnL: this.realizedPnL,
       unrealizedPnL,
       totalTrades: this.trades.length,
+      wins: wins.length,
+      losses: losses.length,
       winCount: wins.length,
       lossCount: losses.length,
       winRate: this.trades.length > 0 ? wins.length / this.trades.length : 0,

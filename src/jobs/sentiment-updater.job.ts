@@ -1,24 +1,14 @@
-// src/jobs/sentiment-updater.job.ts
-
-/**
- * 센티먼트 업데이터 Job
- * - Fear & Greed Index 조회
- * - 마켓 페이즈 계산
- */
+import { prisma } from "@db/prisma";
+import type { SentimentData } from "@generated/prisma/client";
 
 const FEAR_GREED_URL = "https://api.alternative.me/fng/";
 
-interface FearGreedData {
+export interface FearGreedData {
   value: number;
   classification: string;
   timestamp: string;
-  marketPhase: "accumulate" | "hold" | "reduce" | "exit";
+  marketPhase: string;
 }
-
-// 인메모리 센티먼트 저장소
-let currentSentiment: FearGreedData | null = null;
-const sentimentHistory: FearGreedData[] = [];
-const MAX_HISTORY = 168; // 7일 * 24시간
 
 /**
  * 센티먼트 업데이트 실행
@@ -37,21 +27,20 @@ export async function runSentimentUpdater(): Promise<void> {
     const value = parseInt(fgData.value);
     const classification = fgData.value_classification;
     const marketPhase = calculateMarketPhase(value);
+    const timestamp = new Date();
 
-    currentSentiment = {
-      value,
-      classification,
-      timestamp: new Date().toISOString(),
-      marketPhase,
-    };
+    await prisma.sentimentData.create({
+      data: {
+        fearGreedIndex: value,
+        fearGreedClass: classification,
+        marketPhase,
+        sentimentScore: value,
+      },
+    });
 
-    // 히스토리에 추가
-    sentimentHistory.push(currentSentiment);
-    if (sentimentHistory.length > MAX_HISTORY) {
-      sentimentHistory.shift();
-    }
-
-    console.log(`📊 Sentiment: ${value} (${classification}) → ${marketPhase}`);
+    console.log(
+      `📊 Sentiment saved: ${value} (${classification}) → ${marketPhase}`
+    );
   } catch (error) {
     console.error("❌ Sentiment update failed:", error);
   }
@@ -60,69 +49,46 @@ export async function runSentimentUpdater(): Promise<void> {
 /**
  * 마켓 페이즈 계산
  */
-function calculateMarketPhase(
-  value: number
-): "accumulate" | "hold" | "reduce" | "exit" {
-  if (value < 25) return "accumulate"; // 극도의 공포 = 매수 기회
+function calculateMarketPhase(value: number): string {
+  if (value < 25) return "accumulate";
   if (value < 50) return "hold";
   if (value < 75) return "reduce";
-  return "exit"; // 극도의 탐욕 = 익절
+  return "exit";
 }
 
 /**
  * 현재 센티먼트 조회
  */
-export function getCurrentSentiment(): FearGreedData | null {
-  return currentSentiment;
+export async function getCurrentSentiment(): Promise<FearGreedData | null> {
+  const latest = await prisma.sentimentData.findFirst({
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (!latest) return null;
+
+  return {
+    value: latest.fearGreedIndex,
+    classification: latest.fearGreedClass,
+    timestamp: latest.createdAt.toISOString(),
+    marketPhase: latest.marketPhase,
+  };
 }
 
 /**
  * 센티먼트 히스토리 조회
  */
-export function getSentimentHistory(limit?: number): FearGreedData[] {
-  if (limit) {
-    return sentimentHistory.slice(-limit);
-  }
-  return [...sentimentHistory];
-}
+export async function getSentimentHistory(
+  limit: number = 24
+): Promise<FearGreedData[]> {
+  const data = await prisma.sentimentData.findMany({
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
 
-/**
- * 센티먼트 추세 분석
- */
-export function getSentimentTrend(): {
-  current: number | null;
-  average24h: number | null;
-  trend: "improving" | "worsening" | "stable" | "unknown";
-} {
-  if (!currentSentiment) {
-    return { current: null, average24h: null, trend: "unknown" };
-  }
-
-  const last24 = sentimentHistory.slice(-24);
-  if (last24.length < 2) {
-    return {
-      current: currentSentiment.value,
-      average24h: null,
-      trend: "unknown",
-    };
-  }
-
-  const average = last24.reduce((sum, s) => sum + s.value, 0) / last24.length;
-  const first = last24[0].value;
-  const last = last24[last24.length - 1].value;
-
-  let trend: "improving" | "worsening" | "stable";
-  if (last - first > 5) {
-    trend = "improving";
-  } else if (first - last > 5) {
-    trend = "worsening";
-  } else {
-    trend = "stable";
-  }
-
-  return {
-    current: currentSentiment.value,
-    average24h: Math.round(average),
-    trend,
-  };
+  return data.map((s: SentimentData) => ({
+    value: s.fearGreedIndex,
+    classification: s.fearGreedClass,
+    timestamp: s.createdAt.toISOString(),
+    marketPhase: s.marketPhase,
+  }));
 }

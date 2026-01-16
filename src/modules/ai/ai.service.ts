@@ -395,16 +395,20 @@ Respond ONLY with the JSON object, no additional text.
   /**
    * 추천사항 적용
    */
-  applyRecommendations(recommendations: AIRecommendation[]): Array<{
-    recommendation: AIRecommendation;
-    applied: boolean;
-    result: string;
-  }> {
+  async applyRecommendations(recommendations: AIRecommendation[]): Promise<
+    Array<{
+      recommendation: AIRecommendation;
+      applied: boolean;
+      result: string;
+    }>
+  > {
     const results: Array<{
       recommendation: AIRecommendation;
       applied: boolean;
       result: string;
     }> = [];
+
+    const { strategyService } = await import("@strategy/strategy.service");
 
     for (const rec of recommendations) {
       if (!rec.autoApply) {
@@ -416,31 +420,86 @@ Respond ONLY with the JSON object, no additional text.
         continue;
       }
 
-      // 실제 적용 로직 (현재는 로깅만)
+      // 실제 적용 로직
       console.log(`🤖 Applying recommendation: ${rec.type}`);
       console.log(`   Reason: ${rec.reason}`);
 
-      if (rec.changes) {
-        for (const [param, { from, to }] of Object.entries(rec.changes)) {
-          // ±20% 제한 체크
-          const changePercent = Math.abs((to - from) / from) * 100;
-          if (changePercent > 20) {
+      try {
+        if (rec.type === "adjust_params" && rec.strategyName && rec.changes) {
+          const strategies = strategyService.getAllStrategies();
+          const target = strategies.find((s) => s.name === rec.strategyName);
+
+          if (!target) {
             results.push({
               recommendation: rec,
               applied: false,
-              result: `Change exceeds 20% limit: ${param} (${changePercent.toFixed(1)}%)`,
+              result: `Strategy not found: ${rec.strategyName}`,
             });
             continue;
           }
-          console.log(`   ${param}: ${from} → ${to}`);
-        }
-      }
 
-      results.push({
-        recommendation: rec,
-        applied: true,
-        result: "Applied successfully",
-      });
+          const currentParams = target.strategy.getConfig();
+          const newParams = { ...currentParams } as any;
+
+          for (const [param, { from, to }] of Object.entries(rec.changes)) {
+            // ±20% 제한 체크
+            const changePercent = Math.abs((to - from) / from) * 100;
+            if (changePercent > 20) {
+              console.warn(
+                `⚠️ Change for ${param} exceeds 20% limit (${changePercent.toFixed(1)}%)`
+              );
+              // limit to 20%
+              const direction = to > from ? 1.2 : 0.8;
+              newParams[param] = from * direction;
+            } else {
+              newParams[param] = to;
+            }
+          }
+
+          await strategyService.updateParams(
+            target.id,
+            newParams,
+            rec.reason,
+            "ai"
+          );
+
+          results.push({
+            recommendation: rec,
+            applied: true,
+            result: "Parameters updated and persisted to DB",
+          });
+        } else if (
+          (rec.type === "pause_strategy" || rec.type === "resume_strategy") &&
+          rec.strategyName
+        ) {
+          const strategies = strategyService.getAllStrategies();
+          const target = strategies.find((s) => s.name === rec.strategyName);
+
+          if (target) {
+            await strategyService.toggleStrategy(
+              target.id,
+              rec.type === "resume_strategy"
+            );
+            results.push({
+              recommendation: rec,
+              applied: true,
+              result: `Strategy ${rec.type === "resume_strategy" ? "resumed" : "paused"}`,
+            });
+          }
+        } else {
+          results.push({
+            recommendation: rec,
+            applied: false,
+            result: `Automation for ${rec.type} not yet implemented`,
+          });
+        }
+      } catch (error: any) {
+        results.push({
+          recommendation: rec,
+          applied: false,
+          result: `Error: ${error.message}`,
+        });
+      }
     }
 
     return results;
