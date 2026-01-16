@@ -1,4 +1,5 @@
 import { prisma } from "@db/prisma";
+import type { AccountSnapshot } from "@generated/prisma/client";
 
 export interface DailySnapshot {
   date: string;
@@ -155,4 +156,77 @@ export async function getAccountStatus() {
     totalPnl,
     totalPnlPercent: initialBalance > 0 ? (totalPnl / initialBalance) * 100 : 0,
   };
+}
+
+/**
+ * 성과 요약 조회
+ */
+export async function getPerformanceSummary(days: number = 30) {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+
+  const snapshots = await prisma.accountSnapshot.findMany({
+    where: { date: { gte: startDate } },
+    orderBy: { date: "asc" },
+  });
+
+  if (snapshots.length === 0) {
+    return {
+      periodDays: days,
+      totalPnl: 0,
+      totalPnlPercent: 0,
+      avgDailyPnl: 0,
+      bestDay: null,
+      worstDay: null,
+      winningDays: 0,
+      losingDays: 0,
+    };
+  }
+
+  const totalPnl = snapshots.reduce((sum, s) => sum + s.dailyPnl, 0);
+  const avgDailyPnl = totalPnl / snapshots.length;
+  const bestDay = snapshots.reduce((best, s) =>
+    s.dailyPnl > (best?.dailyPnl || -Infinity) ? s : best
+  );
+  const worstDay = snapshots.reduce((worst, s) =>
+    s.dailyPnl < (worst?.dailyPnl || Infinity) ? s : worst
+  );
+  const winningDays = snapshots.filter((s) => s.dailyPnl > 0).length;
+  const losingDays = snapshots.filter((s) => s.dailyPnl < 0).length;
+
+  return {
+    periodDays: days,
+    totalPnl,
+    totalPnlPercent:
+      snapshots[0].balance > 0 ? (totalPnl / snapshots[0].balance) * 100 : 0,
+    avgDailyPnl,
+    bestDay: bestDay
+      ? { date: bestDay.date.toISOString().split("T")[0], pnl: bestDay.dailyPnl }
+      : null,
+    worstDay: worstDay
+      ? { date: worstDay.date.toISOString().split("T")[0], pnl: worstDay.dailyPnl }
+      : null,
+    winningDays,
+    losingDays,
+  };
+}
+
+/**
+ * 잔고 설정 (테스트/초기화용)
+ */
+export async function setBalance(balance: number): Promise<void> {
+  await prisma.globalConfig.upsert({
+    where: { id: "default" },
+    update: {
+      currentBalance: balance,
+      peakBalance: balance,
+    },
+    create: {
+      id: "default",
+      initialBalance: balance,
+      currentBalance: balance,
+      peakBalance: balance,
+    },
+  });
+  console.log(`💰 Balance set to $${balance.toFixed(2)}`);
 }

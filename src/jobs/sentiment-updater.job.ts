@@ -92,3 +92,67 @@ export async function getSentimentHistory(
     marketPhase: s.marketPhase,
   }));
 }
+
+/**
+ * 센티먼트 트렌드 분석
+ */
+export async function getSentimentTrend(
+  hours: number = 24
+): Promise<{
+  current: number;
+  average: number;
+  trend: "improving" | "worsening" | "stable";
+  change: number;
+}> {
+  const data = await prisma.sentimentData.findMany({
+    where: {
+      createdAt: {
+        gte: new Date(Date.now() - hours * 60 * 60 * 1000),
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (data.length === 0) {
+    return {
+      current: 50,
+      average: 50,
+      trend: "stable",
+      change: 0,
+    };
+  }
+
+  const current = data[data.length - 1].fearGreedIndex;
+  const average =
+    data.reduce((sum, d) => sum + d.fearGreedIndex, 0) / data.length;
+
+  // 최근 절반과 이전 절반 비교
+  const midpoint = Math.floor(data.length / 2);
+  const recentHalf = data.slice(midpoint);
+  const olderHalf = data.slice(0, midpoint);
+
+  const recentAvg =
+    recentHalf.length > 0
+      ? recentHalf.reduce((sum, d) => sum + d.fearGreedIndex, 0) /
+        recentHalf.length
+      : average;
+  const olderAvg =
+    olderHalf.length > 0
+      ? olderHalf.reduce((sum, d) => sum + d.fearGreedIndex, 0) /
+        olderHalf.length
+      : average;
+
+  const change = recentAvg - olderAvg;
+
+  let trend: "improving" | "worsening" | "stable";
+  if (change > 5) trend = "improving";
+  else if (change < -5) trend = "worsening";
+  else trend = "stable";
+
+  return {
+    current,
+    average,
+    trend,
+    change,
+  };
+}

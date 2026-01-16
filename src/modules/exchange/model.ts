@@ -51,15 +51,16 @@ export const PositionSchema = {
     t.Object({
       coin: t.String(),
       szi: t.String(), // position size (signed)
-      entryPx: t.Optional(t.String()),
+      entryPx: t.Union([t.String(), t.Null()]),
       positionValue: t.String(),
       unrealizedPnl: t.String(),
       returnOnEquity: t.String(),
       leverage: t.Object({
         type: t.String(),
         value: t.Number(),
+        rawUsd: t.Optional(t.String()),
       }),
-      liquidationPx: t.Optional(t.String()),
+      liquidationPx: t.Union([t.String(), t.Null()]),
       marginUsed: t.String(),
     })
   ),
@@ -74,26 +75,29 @@ export const OrderBookSchema = {
     coin: t.String(),
   }),
 
-  res: t.Object({
-    coin: t.String(),
-    time: t.Number(),
-    levels: t.Tuple([
-      t.Array(
-        t.Object({
-          px: t.String(), // price
-          sz: t.String(), // size
-          n: t.Number(), // number of orders
-        })
-      ),
-      t.Array(
-        t.Object({
-          px: t.String(),
-          sz: t.String(),
-          n: t.Number(),
-        })
-      ),
-    ]),
-  }),
+  res: t.Union([
+    t.Object({
+      coin: t.String(),
+      time: t.Number(),
+      levels: t.Tuple([
+        t.Array(
+          t.Object({
+            px: t.String(), // price
+            sz: t.String(), // size
+            n: t.Number(), // number of orders
+          })
+        ),
+        t.Array(
+          t.Object({
+            px: t.String(),
+            sz: t.String(),
+            n: t.Number(),
+          })
+        ),
+      ]),
+    }),
+    t.Null(),
+  ]),
 };
 
 // ============================================
@@ -139,23 +143,7 @@ export const PlaceOrderSchema = {
       t.Object({
         type: t.String(),
         data: t.Object({
-          statuses: t.Array(
-            t.Union([
-              t.Object({
-                resting: t.Object({ oid: t.Number() }),
-              }),
-              t.Object({
-                filled: t.Object({
-                  totalSz: t.String(),
-                  avgPx: t.String(),
-                  oid: t.Number(),
-                }),
-              }),
-              t.Object({
-                error: t.String(),
-              }),
-            ])
-          ),
+          statuses: t.Array(t.Any()),
         }),
       })
     ),

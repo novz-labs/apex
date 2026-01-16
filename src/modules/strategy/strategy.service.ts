@@ -14,6 +14,14 @@ export interface StrategyInstance {
   type: string;
   strategy: TradingStrategy;
   enabled: boolean;
+  allocation: number; // 자본 배분 %
+}
+
+export interface AllocationChange {
+  strategyId: string;
+  strategyName: string;
+  previousAllocation: number;
+  newAllocation: number;
 }
 
 class StrategyService {
@@ -52,6 +60,7 @@ class StrategyService {
         type: dbEntry.type as StrategyType,
         strategy: strategyInstance,
         enabled: dbEntry.enabled,
+        allocation: dbEntry.allocation ?? 0,
       });
     }
 
@@ -91,6 +100,7 @@ class StrategyService {
       type,
       strategy: instance,
       enabled: false,
+      allocation: 0,
     });
 
     return dbEntry;
@@ -168,22 +178,191 @@ class StrategyService {
       }),
     ]);
 
-    // 인스턴스 파라미터 업데이트 (새 인스턴스 생성 또는 동적 업데이트)
-    // 여기서는 간단히 새 인스턴스로 교체 (상태 유지가 필요한 경우 주의)
-    if (instance.type === "grid_bot") {
-      instance.strategy = new GridBotStrategy(newParams as GridConfig);
-      if (instance.enabled && instance.strategy.initializeGrids)
-        instance.strategy.initializeGrids();
-    } else if (instance.type === "momentum") {
-      instance.strategy = new MomentumStrategy(newParams as MomentumConfig);
-      if (instance.enabled) instance.strategy.start();
+    // 인스턴스 파라미터 업데이트 (새 인스턴스 생성)
+    const wasEnabled = instance.enabled;
+
+    switch (instance.type) {
+      case "grid_bot":
+        instance.strategy = new GridBotStrategy(newParams as GridConfig);
+        if (wasEnabled && instance.strategy.initializeGrids) {
+          instance.strategy.initializeGrids();
+        }
+        break;
+      case "momentum":
+        instance.strategy = new MomentumStrategy(newParams as MomentumConfig);
+        if (wasEnabled) instance.strategy.start();
+        break;
+      case "scalping":
+        instance.strategy = new ScalpingStrategy(newParams as ScalpingConfig);
+        if (wasEnabled) instance.strategy.start();
+        break;
+      case "funding_arb":
+        instance.strategy = new FundingArbStrategy(newParams as FundingArbConfig);
+        if (wasEnabled) instance.strategy.start();
+        break;
     }
 
+    console.log(`🔄 Strategy params updated: ${instance.name} (${reason})`);
     return instance;
+  }
+
+  /**
+   * 자본 배분 업데이트
+   */
+  async updateAllocation(
+    allocations: Record<string, number>,
+    reason: string,
+    source: string = "ai"
+  ): Promise<AllocationChange[]> {
+    const changes: AllocationChange[] = [];
+
+    // 총 배분이 100%를 넘지 않는지 검증
+    const totalAllocation = Object.values(allocations).reduce((sum, v) => sum + v, 0);
+    if (totalAllocation > 100) {
+      throw new Error(`Total allocation exceeds 100%: ${totalAllocation}%`);
+    }
+
+    for (const [strategyId, newAllocation] of Object.entries(allocations)) {
+      const instance = this.activeStrategies.get(strategyId);
+      if (!instance) {
+        console.warn(`Strategy not found for allocation update: ${strategyId}`);
+        continue;
+      }
+
+      const previousAllocation = instance.allocation;
+
+      // DB 업데이트
+      await prisma.strategy.update({
+        where: { id: strategyId },
+        data: { allocation: newAllocation },
+      });
+
+      // 히스토리 기록
+      await prisma.strategyParamHistory.create({
+        data: {
+          strategyId,
+          previousParams: JSON.stringify({ allocation: previousAllocation }),
+          newParams: JSON.stringify({ allocation: newAllocation }),
+          changeReason: `Allocation change: ${reason}`,
+          source,
+        },
+      });
+
+      // 메모리 업데이트
+      instance.allocation = newAllocation;
+
+      changes.push({
+        strategyId,
+        strategyName: instance.name,
+        previousAllocation,
+        newAllocation,
+      });
+
+      console.log(
+        `📊 Allocation changed: ${instance.name} ${previousAllocation}% → ${newAllocation}%`
+      );
+    }
+
+    return changes;
+  }
+
+  /**
+   * 전략별 자본 배분 비율에 따른 실제 자본 계산
+   */
+  calculateCapitalForStrategy(strategyId: string, totalCapital: number): number {
+    const instance = this.activeStrategies.get(strategyId);
+    if (!instance) return 0;
+
+    return (totalCapital * instance.allocation) / 100;
+  }
+
+  /**
+   * 모든 전략의 자본 배분 현황 조회
+   */
+  getAllocationSummary(): {
+    strategies: Array<{ id: string; name: string; type: string; allocation: number; enabled: boolean }>;
+    totalAllocated: number;
+    unallocated: number;
+  } {
+    const strategies = Array.from(this.activeStrategies.values()).map((s) => ({
+      id: s.id,
+      name: s.name,
+      type: s.type,
+      allocation: s.allocation,
+      enabled: s.enabled,
+    }));
+
+    const totalAllocated = strategies.reduce((sum, s) => sum + s.allocation, 0);
+
+    return {
+      strategies,
+      totalAllocated,
+      unallocated: 100 - totalAllocated,
+    };
+  }
+
+  /**
+   * 특정 파라미터만 부분 업데이트 (기존 파라미터 유지)
+   */
+  async updateParamsPartial(
+    id: string,
+    partialParams: Record<string, number>,
+    reason: string,
+    source: string = "ai"
+  ) {
+    const instance = this.activeStrategies.get(id);
+    if (!instance) throw new Error("Strategy not found");
+
+    // 현재 파라미터 조회
+    const current = await prisma.strategy.findUnique({
+      where: { id },
+      select: { paramsJson: true },
+    });
+
+    const currentParams = JSON.parse(current?.paramsJson || "{}");
+
+    // 변경사항 적용 (±20% 제한 체크)
+    const newParams = { ...currentParams };
+    const appliedChanges: Record<string, { from: number; to: number }> = {};
+
+    for (const [key, newValue] of Object.entries(partialParams)) {
+      const oldValue = currentParams[key];
+
+      if (oldValue !== undefined && typeof oldValue === "number") {
+        // ±20% 제한 적용
+        const maxChange = Math.abs(oldValue) * 0.2;
+        const clampedValue = Math.max(
+          oldValue - maxChange,
+          Math.min(oldValue + maxChange, newValue)
+        );
+
+        newParams[key] = clampedValue;
+        appliedChanges[key] = { from: oldValue, to: clampedValue };
+
+        if (clampedValue !== newValue) {
+          console.warn(
+            `⚠️ Parameter ${key} clamped: requested ${newValue}, applied ${clampedValue} (±20% limit)`
+          );
+        }
+      } else {
+        // 새 파라미터는 그대로 적용
+        newParams[key] = newValue;
+        appliedChanges[key] = { from: oldValue ?? 0, to: newValue };
+      }
+    }
+
+    // 전체 업데이트 실행
+    await this.updateParams(id, newParams, reason, source);
+
+    return { appliedChanges, newParams };
   }
 
   getStrategy(id: string) {
     return this.activeStrategies.get(id);
+  }
+
+  getStrategyByName(name: string) {
+    return Array.from(this.activeStrategies.values()).find((s) => s.name === name);
   }
 
   getAllStrategies() {

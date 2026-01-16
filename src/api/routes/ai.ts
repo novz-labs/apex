@@ -121,7 +121,7 @@ export const aiRoutes = new Elysia({ prefix: "/ai" })
   .post(
     "/apply",
     async ({ body }) => {
-      const results = aiService.applyRecommendations(body.recommendations);
+      const results = await aiService.applyRecommendations(body.recommendations as any);
       return {
         applied: results.filter((r) => r.applied).length,
         skipped: results.filter((r) => !r.applied).length,

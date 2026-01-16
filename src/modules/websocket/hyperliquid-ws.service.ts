@@ -99,10 +99,10 @@ class HyperliquidWebSocketService {
    */
   private async startPriceSubscription(symbol: string): Promise<void> {
     try {
-      const client = getSubscriptionClient();
+      const client = getSubscriptionClient() as any;
       this.subscriptions.add(`price:${symbol}`);
 
-      await client.subscribe({ type: "allMids" }, (data) => {
+      await client.subscribe({ type: "allMids" }, (data: any) => {
         // allMids 응답에서 해당 심볼의 가격 추출
         const mids = data as Record<string, string>;
         const priceStr = mids[symbol];
@@ -132,10 +132,10 @@ class HyperliquidWebSocketService {
    */
   private async startOrderBookSubscription(symbol: string): Promise<void> {
     try {
-      const client = getSubscriptionClient();
+      const client = getSubscriptionClient() as any;
       this.subscriptions.add(`orderbook:${symbol}`);
 
-      await client.subscribe({ type: "l2Book", coin: symbol }, (data) => {
+      await client.subscribe({ type: "l2Book", coin: symbol }, (data: any) => {
         const bookData = data as {
           coin: string;
           levels: [

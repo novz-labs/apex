@@ -485,7 +485,107 @@ Respond ONLY with the JSON object, no additional text.
               applied: true,
               result: `Strategy ${rec.type === "resume_strategy" ? "resumed" : "paused"}`,
             });
+          } else {
+            results.push({
+              recommendation: rec,
+              applied: false,
+              result: `Strategy not found: ${rec.strategyName}`,
+            });
           }
+        } else if (rec.type === "adjust_allocation" && rec.allocationChanges) {
+          // 자본 배분 변경
+          const strategies = strategyService.getAllStrategies();
+          const allocations: Record<string, number> = {};
+
+          for (const [strategyName, newAllocation] of Object.entries(rec.allocationChanges)) {
+            const target = strategies.find((s) => s.name === strategyName);
+            if (target) {
+              // ±10% 제한 (allocation은 더 보수적으로)
+              const currentAllocation = target.allocation;
+              const maxChange = 10; // 최대 10%p 변경
+              const clampedAllocation = Math.max(
+                Math.max(0, currentAllocation - maxChange),
+                Math.min(Math.min(100, currentAllocation + maxChange), newAllocation)
+              );
+              allocations[target.id] = clampedAllocation;
+
+              if (clampedAllocation !== newAllocation) {
+                console.warn(
+                  `⚠️ Allocation for ${strategyName} clamped: requested ${newAllocation}%, applied ${clampedAllocation}% (±10%p limit)`
+                );
+              }
+            }
+          }
+
+          if (Object.keys(allocations).length > 0) {
+            const changes = await strategyService.updateAllocation(
+              allocations,
+              rec.reason,
+              "ai"
+            );
+            results.push({
+              recommendation: rec,
+              applied: true,
+              result: `Allocation updated for ${changes.length} strategies`,
+            });
+          } else {
+            results.push({
+              recommendation: rec,
+              applied: false,
+              result: "No valid strategies found for allocation change",
+            });
+          }
+        } else if (rec.type === "adjust_risk") {
+          // 리스크 조정 - 모든 전략의 레버리지/포지션 크기 조정
+          const strategies = strategyService.getAllStrategies();
+          let adjustedCount = 0;
+
+          for (const strategy of strategies) {
+            if (!strategy.enabled) continue;
+
+            const currentParams = strategy.strategy.getConfig();
+            const newParams = { ...currentParams };
+            let changed = false;
+
+            // 레버리지 조정 (있는 경우)
+            if ("leverage" in newParams && rec.changes?.leverage) {
+              const { to } = rec.changes.leverage;
+              // 레버리지는 최소 1, 최대 현재값의 ±20%
+              const currentLev = newParams.leverage as number;
+              const maxLev = Math.min(currentLev * 1.2, to);
+              const minLev = Math.max(1, currentLev * 0.8, to);
+              newParams.leverage = Math.max(minLev, Math.min(maxLev, to));
+              changed = true;
+            }
+
+            // 포지션 크기 조정 (있는 경우)
+            if ("positionSizePercent" in newParams && rec.changes?.positionSizePercent) {
+              const { to } = rec.changes.positionSizePercent;
+              const current = newParams.positionSizePercent as number;
+              const maxSize = Math.min(current * 1.2, to);
+              const minSize = Math.max(1, current * 0.8, to);
+              newParams.positionSizePercent = Math.max(minSize, Math.min(maxSize, to));
+              changed = true;
+            }
+
+            if (changed) {
+              await strategyService.updateParams(
+                strategy.id,
+                newParams,
+                rec.reason,
+                "ai"
+              );
+              adjustedCount++;
+            }
+          }
+
+          results.push({
+            recommendation: rec,
+            applied: adjustedCount > 0,
+            result: adjustedCount > 0
+              ? `Risk adjusted for ${adjustedCount} strategies`
+              : "No strategies adjusted",
+          });
         } else {
           results.push({
             recommendation: rec,

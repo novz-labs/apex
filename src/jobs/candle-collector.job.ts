@@ -133,3 +133,30 @@ export async function getLatestCandles(): Promise<
 
   return result;
 }
+
+/**
+ * 캔들 수집 통계 조회
+ */
+export async function getCandleStats(): Promise<{
+  symbols: string[];
+  totalCandles: number;
+  oldestCandle: Date | null;
+  newestCandle: Date | null;
+}> {
+  const count = await prisma.candleCache.count();
+  const oldest = await prisma.candleCache.findFirst({
+    orderBy: { openTime: "asc" },
+    select: { openTime: true },
+  });
+  const newest = await prisma.candleCache.findFirst({
+    orderBy: { openTime: "desc" },
+    select: { openTime: true },
+  });
+
+  return {
+    symbols: SYMBOLS,
+    totalCandles: count,
+    oldestCandle: oldest?.openTime || null,
+    newestCandle: newest?.openTime || null,
+  };
+}
