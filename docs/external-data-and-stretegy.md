@@ -40,12 +40,10 @@
 
 ### 5. 거래소 API
 
-| 거래소          | 용도                 | Rate Limit   |
-| --------------- | -------------------- | ------------ |
-| **Hyperliquid** | Perp 거래, 오더북    | 높음         |
-| **Binance**     | Spot/Futures, 데이터 | 1200 req/min |
-| **Bybit**       | Perp 거래            | -            |
-| **Lighter DEX** | DEX Perp             | -            |
+| 거래소          | 용도                             | Rate Limit   |
+| --------------- | -------------------------------- | ------------ |
+| **Hyperliquid** | Perp 거래, 오더북 (Primary)      | 높음         |
+| **Binance**     | Spot/Futures, 데이터 (Secondary) | 1200 req/min |
 
 ---
 

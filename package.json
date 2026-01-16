@@ -8,10 +8,14 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@elysiajs/swagger": "^1.3.1",
+    "@nktkas/hyperliquid": "^0.30.2",
     "@prisma/client": "^7.2.0",
+    "croner": "^9.1.0",
     "elysia": "latest",
     "elysia-rate-limit": "^4.4.2",
-    "prismabox": "^1.1.26"
+    "prismabox": "^1.1.26",
+    "viem": "^2.43.5"
   },
   "devDependencies": {
     "@prisma/adapter-libsql": "^7.2.0",
