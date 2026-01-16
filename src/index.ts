@@ -1,6 +1,9 @@
 import { swagger } from "@elysiajs/swagger";
 import { Elysia } from "elysia";
 import {
+  agentRoutes,
+  aiRoutes,
+  backtestRoutes,
   binanceRoutes,
   exchangeRoutes,
   externalRoutes,
@@ -8,6 +11,7 @@ import {
   jobsRoutes,
   strategyRoutes,
 } from "./api/routes";
+import { aiService } from "./modules/ai";
 
 const app = new Elysia()
   // Swagger UI - API 문서 및 테스트 인터페이스
@@ -31,6 +35,8 @@ const app = new Elysia()
           { name: "External - Trends", description: "Google Trends (옵션)" },
           { name: "Trade", description: "거래 관리 API" },
           { name: "Strategy", description: "전략 관리 API" },
+          { name: "Backtest", description: "백테스트 및 시뮬레이션 API" },
+          { name: "Agent", description: "자율 트레이딩 에이전트 API" },
           { name: "Jobs", description: "크론 작업 및 스케줄러 API" },
           { name: "AI", description: "AI 분석 API" },
           { name: "Market", description: "시장 데이터 API" },
@@ -63,7 +69,10 @@ const app = new Elysia()
   .use(exchangeRoutes)
   .use(binanceRoutes)
   .use(strategyRoutes)
+  .use(backtestRoutes)
+  .use(agentRoutes)
   .use(jobsRoutes)
+  .use(aiRoutes)
   .use(externalRoutes)
 
   .listen(3000);
@@ -75,6 +84,9 @@ console.log(`📚 Swagger UI: http://localhost:3000/swagger`);
 
 // 스케줄러 시작
 initializeJobs();
+
+// AI 서비스 초기화
+aiService.initialize();
 
 // Graceful shutdown
 process.on("SIGINT", () => {

@@ -1,11 +1,13 @@
 // src/api/routes/external.ts
 import { Elysia, t } from "elysia";
+import * as CoinGecko from "../../modules/external/coingecko.service";
+import * as DeFiLlama from "../../modules/external/defillama.service";
+import * as Sentiment from "../../modules/external/sentiment.service";
 
 // ============================================
 // CoinGecko 스키마
 // ============================================
 const CoinGeckoSchema = {
-  // GET /external/coingecko/prices
   pricesQuery: t.Object({
     coinIds: t.String({
       description: "Comma-separated coin IDs (e.g. bitcoin,ethereum)",
@@ -21,7 +23,6 @@ const CoinGeckoSchema = {
     })
   ),
 
-  // GET /external/coingecko/coin/:coinId
   coinParams: t.Object({
     coinId: t.String(),
   }),
@@ -32,7 +33,6 @@ const CoinGeckoSchema = {
     totalSupply: t.Number(),
   }),
 
-  // GET /external/coingecko/markets
   marketsQuery: t.Object({
     limit: t.Optional(t.Number({ minimum: 1, maximum: 250, default: 100 })),
   }),
@@ -53,7 +53,6 @@ const CoinGeckoSchema = {
 // DeFiLlama 스키마
 // ============================================
 const DeFiLlamaSchema = {
-  // GET /external/defillama/tvl/:protocol
   tvlParams: t.Object({
     protocol: t.String(),
   }),
@@ -63,7 +62,6 @@ const DeFiLlamaSchema = {
     change_7d: t.Number(),
   }),
 
-  // GET /external/defillama/protocols
   protocolsRes: t.Array(
     t.Object({
       name: t.String(),
@@ -74,7 +72,6 @@ const DeFiLlamaSchema = {
     })
   ),
 
-  // GET /external/defillama/yields
   yieldsQuery: t.Object({
     limit: t.Optional(t.Number({ default: 50 })),
   }),
@@ -90,10 +87,9 @@ const DeFiLlamaSchema = {
 };
 
 // ============================================
-// Sentiment (Fear & Greed) 스키마
+// Sentiment 스키마
 // ============================================
 const SentimentSchema = {
-  // GET /external/sentiment/fear-greed
   fearGreedRes: t.Object({
     value: t.Number(),
     classification: t.String(),
@@ -101,7 +97,6 @@ const SentimentSchema = {
     timestamp: t.String(),
   }),
 
-  // GET /external/sentiment/history
   historyQuery: t.Object({
     days: t.Optional(t.Number({ minimum: 1, maximum: 90, default: 30 })),
   }),
@@ -115,21 +110,6 @@ const SentimentSchema = {
 };
 
 // ============================================
-// Google Trends 스키마 (옵션)
-// ============================================
-const GoogleTrendsSchema = {
-  // GET /external/trends/:keyword
-  params: t.Object({
-    keyword: t.String(),
-  }),
-  res: t.Object({
-    keyword: t.String(),
-    interestOverTime: t.Array(t.Number()),
-    relatedQueries: t.Array(t.String()),
-  }),
-};
-
-// ============================================
 // 라우트 정의
 // ============================================
 export const externalRoutes = new Elysia({ prefix: "/external" })
@@ -138,8 +118,8 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
   .get(
     "/coingecko/prices",
     async ({ query }) => {
-      // TODO: Implement coinGeckoService.getPrices(query.coinIds.split(","))
-      throw new Error("Not implemented");
+      const coinIds = query.coinIds.split(",").map((id) => id.trim());
+      return CoinGecko.getPrices(coinIds);
     },
     {
       query: CoinGeckoSchema.pricesQuery,
@@ -155,8 +135,7 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
   .get(
     "/coingecko/coin/:coinId",
     async ({ params }) => {
-      // TODO: Implement coinGeckoService.getCoinDetails(params.coinId)
-      throw new Error("Not implemented");
+      return CoinGecko.getCoinDetails(params.coinId);
     },
     {
       params: CoinGeckoSchema.coinParams,
@@ -172,8 +151,7 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
   .get(
     "/coingecko/markets",
     async ({ query }) => {
-      // TODO: Implement coinGeckoService.getMarkets(query.limit)
-      throw new Error("Not implemented");
+      return CoinGecko.getMarkets(query.limit || 100);
     },
     {
       query: CoinGeckoSchema.marketsQuery,
@@ -190,8 +168,7 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
   .get(
     "/defillama/tvl/:protocol",
     async ({ params }) => {
-      // TODO: Implement defiLlamaService.getProtocolTVL(params.protocol)
-      throw new Error("Not implemented");
+      return DeFiLlama.getProtocolTVL(params.protocol);
     },
     {
       params: DeFiLlamaSchema.tvlParams,
@@ -207,8 +184,7 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
   .get(
     "/defillama/protocols",
     async () => {
-      // TODO: Implement defiLlamaService.getAllProtocols()
-      throw new Error("Not implemented");
+      return DeFiLlama.getAllProtocols();
     },
     {
       response: DeFiLlamaSchema.protocolsRes,
@@ -223,8 +199,7 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
   .get(
     "/defillama/yields",
     async ({ query }) => {
-      // TODO: Implement defiLlamaService.getYieldPools(query.limit)
-      throw new Error("Not implemented");
+      return DeFiLlama.getYieldPools(query.limit || 50);
     },
     {
       query: DeFiLlamaSchema.yieldsQuery,
@@ -241,8 +216,7 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
   .get(
     "/sentiment/fear-greed",
     async () => {
-      // TODO: Implement sentimentService.getFearGreedIndex()
-      throw new Error("Not implemented");
+      return Sentiment.getFearGreedIndex();
     },
     {
       response: SentimentSchema.fearGreedRes,
@@ -257,8 +231,7 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
   .get(
     "/sentiment/history",
     async ({ query }) => {
-      // TODO: Implement sentimentService.getFearGreedHistory(query.days)
-      throw new Error("Not implemented");
+      return Sentiment.getFearGreedHistory(query.days || 30);
     },
     {
       query: SentimentSchema.historyQuery,
@@ -267,24 +240,6 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
         tags: ["External - Sentiment"],
         summary: "Fear & Greed 히스토리",
         description: "과거 공포/탐욕 지수 히스토리 조회",
-      },
-    }
-  )
-
-  // --- Google Trends (옵션) ---
-  .get(
-    "/trends/:keyword",
-    async ({ params }) => {
-      // TODO: Implement serpApiService.getGoogleTrends(params.keyword)
-      throw new Error("Not implemented");
-    },
-    {
-      params: GoogleTrendsSchema.params,
-      response: GoogleTrendsSchema.res,
-      detail: {
-        tags: ["External - Trends"],
-        summary: "Google Trends 조회",
-        description: "키워드의 검색량 트렌드 및 관련 쿼리 조회 (SerpApi 필요)",
       },
     }
   );
