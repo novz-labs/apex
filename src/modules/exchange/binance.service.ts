@@ -3,6 +3,7 @@ import {
   getNetworkInfo as getClientNetworkInfo,
   privateRequest,
   publicRequest,
+  spotPrivateRequest,
 } from "./binance.client";
 
 // ============================================
