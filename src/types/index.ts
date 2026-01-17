@@ -11,6 +11,8 @@ export interface StrategyStats {
   unrealizedPnL?: number;
   winRate?: number;
   totalPnL?: number;
+  winTrades?: number; // 추가
+  lossTrades?: number; // 추가
 }
 
 export interface TradeResult {
@@ -22,8 +24,8 @@ export interface TradeResult {
 }
 
 export interface TradingStrategy {
-  start(): void;
-  stop(): void;
+  start(): Promise<void> | void;
+  stop(): Promise<void> | void;
   onPriceUpdate(currentPrice: number): any | Promise<any>;
   getStats(): StrategyStats;
   getConfig(): any;

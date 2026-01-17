@@ -178,7 +178,7 @@ export class TradingAgent {
       // 백테스트 실행
       const candles = generateSampleCandles(this.config.backtestDays, 95000);
       const backTestConfig = this.buildBacktestConfig(params);
-      const result = runBacktest(backTestConfig, candles);
+      const result = await runBacktest(backTestConfig, candles);
 
       // 점수 계산 (복합 지표)
       const score = this.calculateScore(result);
@@ -232,7 +232,7 @@ export class TradingAgent {
     // 7일 추가 백테스트로 Paper Trading 시뮬레이션
     const candles = generateSampleCandles(7, 95000);
     const config = this.buildBacktestConfig(this.state.bestParams);
-    const result = runBacktest(config, candles);
+    const result = await runBacktest(config, candles);
 
     this.state.paperTradingResults = {
       trades: result.totalTrades,
@@ -365,6 +365,7 @@ Approve at /agent/${this.config.name}/approve`,
   private buildBacktestConfig(params: Record<string, number>): BacktestConfig {
     return {
       symbol: this.config.symbol,
+      days: this.config.backtestDays,
       startDate: new Date(
         Date.now() - this.config.backtestDays * 24 * 60 * 60 * 1000
       ),

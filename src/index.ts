@@ -1,5 +1,6 @@
 import { swagger } from "@elysiajs/swagger";
 import { Elysia } from "elysia";
+import { authGuard } from "./api/middleware/auth";
 import {
   agentRoutes,
   aiRoutes,
@@ -13,9 +14,11 @@ import {
 } from "./api/routes";
 import { aiService } from "./modules/ai";
 
-const app = new Elysia()
-  // Swagger UI - API 문서 및 테스트 인터페이스
-  .use(
+const app = new Elysia();
+
+// Swagger UI - Only in non-production
+if (process.env.NODE_ENV !== "production") {
+  app.use(
     swagger({
       documentation: {
         info: {
@@ -44,7 +47,10 @@ const app = new Elysia()
       },
       path: "/swagger",
     })
-  )
+  );
+}
+
+app
 
   // Health check
   .get("/", () => ({ status: "ok", message: "Apex Trading Bot" }), {
@@ -64,6 +70,9 @@ const app = new Elysia()
       },
     }
   )
+
+  // Middleware
+  .use(authGuard)
 
   // Routes
   .use(hyperliquidRoutes)

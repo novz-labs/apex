@@ -1,6 +1,6 @@
 // src/modules/strategy/scalping.service.ts
-
 import { type StrategyStats, type TradingStrategy } from "../../types";
+import { indicatorService } from "../market/indicator.service";
 
 // ============================================
 // 타입 정의
@@ -8,298 +8,75 @@ import { type StrategyStats, type TradingStrategy } from "../../types";
 
 export interface ScalpingConfig {
   symbol: string;
-  timeframe: "1m" | "5m"; // 1분 또는 5분봉
-
-  // 진입 조건
-  rsiLow: number; // 25 (과매도)
-  rsiHigh: number; // 75 (과매수)
-
-  // 목표 수익
-  takeProfitPercent: number; // 0.3-0.5%
-  stopLossPercent: number; // 0.2-0.3%
-
-  // 필터
-  minVolume24h: number; // 최소 24시간 거래량
-  maxSpreadPercent: number; // 최대 스프레드 %
-
-  // 일일 한도
-  maxDailyTrades: number; // 일일 최대 거래 수
-  maxDailyLoss: number; // 일일 최대 손실 $
-
-  // 자본
+  timeframe: string;
+  rsiLow: number;
+  rsiHigh: number;
+  takeProfitPercent: number;
+  stopLossPercent: number;
+  maxSpreadPercent: number;
+  maxDailyTrades: number;
+  maxDailyLoss: number;
   leverage: number;
+  positionSizePercent: number;
   totalCapital: number;
-  positionSizePercent: number; // 1회 포지션 크기 (자본의 %)
 }
 
 export interface ScalpTrade {
   id: string;
-  entryTime: Date;
-  entryPrice: number;
+  symbol: string;
   side: "long" | "short";
-  size: number;
-  targetPrice: number;
-  stopPrice: number;
-  status: "open" | "won" | "lost";
-  exitTime?: Date;
+  entryPrice: number;
   exitPrice?: number;
+  size: number;
+  entryTime: Date;
+  exitTime?: Date;
   pnl?: number;
+  status: "open" | "won" | "lost";
+  reason: string;
   holdingTimeMs?: number;
 }
 
 export interface ScalpingIndicators {
   rsi: number;
-  stochK?: number;
-  stochD?: number;
-  atr?: number; // Average True Range
+  stochK: number;
+  stochD: number;
+  atr: number;
   volume24h: number;
   bidPrice: number;
   askPrice: number;
 }
 
-export interface ScalpingStats extends StrategyStats {
-  todayTrades: number;
-  todayPnL: number;
-  todayWins: number;
-  todayLosses: number;
-  remainingTrades: number;
-  averageHoldingTime: number; // ms
-  currentPosition: ScalpTrade | null;
-}
-
 // ============================================
-// Scalping 전략 클래스
+// Scalping 전략 서비스
 // ============================================
 
 export class ScalpingStrategy implements TradingStrategy {
-  private config: ScalpingConfig;
-  private isRunning: boolean = false;
   private currentPosition: ScalpTrade | null = null;
-
-  // 일일 통계
+  private isRunning: boolean = false;
   private todayTrades: ScalpTrade[] = [];
   private todayPnL: number = 0;
-  private lastResetDate: string = "";
 
-  // 전체 통계
-  private allTrades: ScalpTrade[] = [];
-  private totalPnL: number = 0;
+  constructor(public config: ScalpingConfig) {}
 
-  constructor(config: ScalpingConfig) {
-    this.config = this.validateAndNormalize(config);
-    this.resetDailyStats();
+  /**
+   * 전략 시작
+   */
+  async start(): Promise<void> {
+    this.isRunning = true;
+    console.log(`[Scalping] Started for ${this.config.symbol}`);
   }
 
-  // ============================================
-  // 설정 검증
-  // ============================================
-
-  private validateAndNormalize(config: ScalpingConfig): ScalpingConfig {
-    if (config.rsiLow < 10 || config.rsiLow > 40) {
-      throw new Error("rsiLow must be between 10 and 40");
-    }
-
-    if (config.rsiHigh < 60 || config.rsiHigh > 95) {
-      throw new Error("rsiHigh must be between 60 and 95");
-    }
-
-    if (config.takeProfitPercent < 0.1 || config.takeProfitPercent > 2) {
-      throw new Error("takeProfitPercent must be between 0.1 and 2");
-    }
-
-    if (config.stopLossPercent < 0.1 || config.stopLossPercent > 1) {
-      throw new Error("stopLossPercent must be between 0.1 and 1");
-    }
-
-    if (config.maxDailyTrades < 1 || config.maxDailyTrades > 100) {
-      throw new Error("maxDailyTrades must be between 1 and 100");
-    }
-
-    return config;
+  /**
+   * 전략 중지
+   */
+  async stop(): Promise<void> {
+    this.isRunning = false;
+    console.log(`[Scalping] Stopped for ${this.config.symbol}`);
   }
 
-  // ============================================
-  // 일일 통계 리셋
-  // ============================================
-
-  private resetDailyStats(): void {
-    const today = new Date().toISOString().split("T")[0];
-
-    if (this.lastResetDate !== today) {
-      this.todayTrades = [];
-      this.todayPnL = 0;
-      this.lastResetDate = today;
-      console.log("🔄 Scalping daily stats reset");
-    }
-  }
-
-  // ============================================
-  // 진입 조건 체크
-  // ============================================
-
-  checkEntry(indicators: ScalpingIndicators): {
-    canTrade: boolean;
-    side?: "long" | "short";
-    reason: string;
-    confidence?: number;
-  } {
-    this.resetDailyStats();
-
-    // 이미 포지션이 있으면 진입 불가
-    if (this.currentPosition) {
-      return { canTrade: false, reason: "Position already open" };
-    }
-
-    // 일일 거래 한도 체크
-    if (this.todayTrades.length >= this.config.maxDailyTrades) {
-      return { canTrade: false, reason: "Daily trade limit reached" };
-    }
-
-    // 일일 손실 한도 체크
-    if (this.todayPnL <= -this.config.maxDailyLoss) {
-      return { canTrade: false, reason: "Daily loss limit reached" };
-    }
-
-    // 거래량 체크
-    if (indicators.volume24h < this.config.minVolume24h) {
-      return {
-        canTrade: false,
-        reason: `Insufficient volume: ${indicators.volume24h.toFixed(0)}`,
-      };
-    }
-
-    // 스프레드 체크
-    const spread =
-      ((indicators.askPrice - indicators.bidPrice) / indicators.bidPrice) * 100;
-    if (spread > this.config.maxSpreadPercent) {
-      return {
-        canTrade: false,
-        reason: `Spread too wide: ${spread.toFixed(4)}%`,
-      };
-    }
-
-    // RSI 기반 진입
-    const { rsi } = indicators;
-
-    // 과매도 → Long
-    if (rsi < this.config.rsiLow) {
-      const confidence = Math.min(1, (this.config.rsiLow - rsi) / 15);
-      return {
-        canTrade: true,
-        side: "long",
-        reason: `RSI oversold: ${rsi.toFixed(1)}`,
-        confidence,
-      };
-    }
-
-    // 과매수 → Short
-    if (rsi > this.config.rsiHigh) {
-      const confidence = Math.min(1, (rsi - this.config.rsiHigh) / 15);
-      return {
-        canTrade: true,
-        side: "short",
-        reason: `RSI overbought: ${rsi.toFixed(1)}`,
-        confidence,
-      };
-    }
-
-    // Stochastic 추가 조건 (설정된 경우)
-    if (indicators.stochK !== undefined && indicators.stochD !== undefined) {
-      // Stoch K가 20 이하이고 D를 상향 돌파 → Long
-      if (
-        indicators.stochK < 20 &&
-        indicators.stochK > indicators.stochD &&
-        rsi < 40
-      ) {
-        return {
-          canTrade: true,
-          side: "long",
-          reason: `Stoch bullish crossover (K: ${indicators.stochK.toFixed(1)})`,
-          confidence: 0.7,
-        };
-      }
-
-      // Stoch K가 80 이상이고 D를 하향 돌파 → Short
-      if (
-        indicators.stochK > 80 &&
-        indicators.stochK < indicators.stochD &&
-        rsi > 60
-      ) {
-        return {
-          canTrade: true,
-          side: "short",
-          reason: `Stoch bearish crossover (K: ${indicators.stochK.toFixed(1)})`,
-          confidence: 0.7,
-        };
-      }
-    }
-
-    return { canTrade: false, reason: "No signal" };
-  }
-
-  // ============================================
-  // 포지션 열기
-  // ============================================
-
-  openPosition(
-    side: "long" | "short",
-    entryPrice: number,
-    reason?: string
-  ): ScalpTrade {
-    const {
-      takeProfitPercent,
-      stopLossPercent,
-      totalCapital,
-      leverage,
-      positionSizePercent,
-    } = this.config;
-
-    // 포지션 크기 계산
-    const positionValue =
-      ((totalCapital * positionSizePercent) / 100) * leverage;
-    const size = positionValue / entryPrice;
-
-    // TP/SL 가격 계산
-    const targetPrice =
-      side === "long"
-        ? entryPrice * (1 + takeProfitPercent / 100)
-        : entryPrice * (1 - takeProfitPercent / 100);
-
-    const stopPrice =
-      side === "long"
-        ? entryPrice * (1 - stopLossPercent / 100)
-        : entryPrice * (1 + stopLossPercent / 100);
-
-    const trade: ScalpTrade = {
-      id: `scalp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      entryTime: new Date(),
-      entryPrice,
-      side,
-      size,
-      targetPrice,
-      stopPrice,
-      status: "open",
-    };
-
-    this.currentPosition = trade;
-    this.todayTrades.push(trade);
-    this.allTrades.push(trade);
-
-    console.log(
-      `⚡ Scalp ${side.toUpperCase()} @ $${entryPrice.toFixed(2)} ${reason ? `(${reason})` : ""}`
-    );
-    console.log(
-      `   TP: $${targetPrice.toFixed(2)} (+${takeProfitPercent}%) | SL: $${stopPrice.toFixed(2)} (-${stopLossPercent}%)`
-    );
-    console.log(`   Size: ${size.toFixed(6)} ($${positionValue.toFixed(2)})`);
-
-    return { ...trade };
-  }
-
-  // ============================================
-  // 가격 업데이트 (TP/SL 체크)
-  // ============================================
-
+  /**
+   * 실시간 가격 업데이트 처리
+   */
   async onPriceUpdate(currentPrice: number): Promise<{
     action: "hold" | "tp" | "sl" | "none" | "open";
     position: ScalpTrade | null;
@@ -330,15 +107,119 @@ export class ScalpingStrategy implements TradingStrategy {
         const position = this.openPosition(
           signal.side,
           currentPrice,
-          signal.reason
+          signal.reason || "Unknown"
         );
         return { action: "open", position, signal };
       }
 
       return { action: "hold", position: null };
+    } else {
+      // 포지션 관리 (TP/SL/Exit)
+      const res = this.managePosition(currentPrice);
+      return res;
+    }
+  }
+
+  /**
+   * 진입 조건 확인
+   */
+  private checkEntry(indicators: ScalpingIndicators): {
+    canTrade: boolean;
+    side?: "long" | "short";
+    reason?: string;
+  } {
+    // 1. 일일 거래 제한 확인
+    if (this.todayTrades.length >= this.config.maxDailyTrades) {
+      return { canTrade: false, reason: "Max daily trades reached" };
     }
 
-    const { side, targetPrice, stopPrice } = this.currentPosition;
+    // 2. 일일 손실 제한 확인
+    if (this.todayPnL <= -this.config.maxDailyLoss) {
+      return { canTrade: false, reason: "Max daily loss reached" };
+    }
+
+    // 3. 스프레드 확인
+    const spreadPercent =
+      ((indicators.askPrice - indicators.bidPrice) / indicators.bidPrice) * 100;
+    if (spreadPercent > this.config.maxSpreadPercent) {
+      return { canTrade: false, reason: "Spread too wide" };
+    }
+
+    // 4. 기술 지표 기반 진입 (RSI 과매수/과매도 + 스토캐스틱 골든/데드크로스)
+    // Long: RSI < Low + Stoch K > D
+    if (
+      indicators.rsi < this.config.rsiLow &&
+      indicators.stochK > indicators.stochD
+    ) {
+      return {
+        canTrade: true,
+        side: "long",
+        reason: "Oversold + Stoch Golden Cross",
+      };
+    }
+
+    // Short: RSI > High + Stoch K < D
+    if (
+      indicators.rsi > this.config.rsiHigh &&
+      indicators.stochK < indicators.stochD
+    ) {
+      return {
+        canTrade: true,
+        side: "short",
+        reason: "Overbought + Stoch Dead Cross",
+      };
+    }
+
+    return { canTrade: false };
+  }
+
+  /**
+   * 포지션 오픈
+   */
+  private openPosition(
+    side: "long" | "short",
+    price: number,
+    reason: string
+  ): ScalpTrade {
+    const size =
+      (this.config.totalCapital * (this.config.positionSizePercent / 100)) /
+      price;
+
+    this.currentPosition = {
+      id: Math.random().toString(36).substring(7),
+      symbol: this.config.symbol,
+      side,
+      entryPrice: price,
+      size,
+      entryTime: new Date(),
+      status: "open",
+      reason,
+    };
+
+    console.log(`[Scalping] Entry: ${side} @ ${price} (${reason})`);
+    return this.currentPosition;
+  }
+
+  /**
+   * 포지션 관리 (TP/SL 체크)
+   */
+  private managePosition(currentPrice: number): {
+    action: "hold" | "tp" | "sl";
+    position: ScalpTrade | null;
+    closedPnl?: number;
+  } {
+    if (!this.currentPosition) {
+      return { action: "hold", position: null };
+    }
+
+    const { side, entryPrice } = this.currentPosition;
+    const tpDist = entryPrice * (this.config.takeProfitPercent / 100);
+    const slDist = entryPrice * (this.config.stopLossPercent / 100);
+
+    const targetPrice =
+      side === "long" ? entryPrice + tpDist : entryPrice - tpDist;
+    const stopPrice =
+      side === "long" ? entryPrice - slDist : entryPrice + slDist;
 
     // Long 포지션
     if (side === "long") {
@@ -363,11 +244,10 @@ export class ScalpingStrategy implements TradingStrategy {
     return { action: "hold", position: { ...this.currentPosition } };
   }
 
-  // ============================================
-  // 포지션 종료
-  // ============================================
-
-  closePosition(
+  /**
+   * 포지션 종료
+   */
+  private closePosition(
     exitPrice: number,
     reason: "tp" | "sl" | "manual"
   ): {
@@ -398,150 +278,58 @@ export class ScalpingStrategy implements TradingStrategy {
     this.currentPosition.holdingTimeMs =
       this.currentPosition.exitTime.getTime() - entryTime.getTime();
 
-    // 통계 업데이트
+    // 일일 통계 업데이트
+    this.todayTrades.push({ ...this.currentPosition });
     this.todayPnL += pnl;
-    this.totalPnL += pnl;
 
-    const emoji = reason === "tp" ? "✅" : "❌";
-    const pnlPercent =
-      ((exitPrice - entryPrice) / entryPrice) *
-      100 *
-      (side === "long" ? 1 : -1);
+    const action = reason === "tp" ? "tp" : "sl";
+    const closedPos = { ...this.currentPosition };
 
     console.log(
-      `${emoji} Scalp ${reason.toUpperCase()} @ $${exitPrice.toFixed(2)}`
-    );
-    console.log(
-      `   PnL: $${pnl.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(3)}%)`
-    );
-    console.log(
-      `   Holding: ${((this.currentPosition.holdingTimeMs || 0) / 1000).toFixed(0)}s | Daily: $${this.todayPnL.toFixed(2)}`
+      `[Scalping] Exit (${reason}): $${pnl.toFixed(2)} (${(
+        (pnl /
+          ((this.config.totalCapital * this.config.positionSizePercent) /
+            100)) *
+        100
+      ).toFixed(2)}%)`
     );
 
-    const closedPosition = { ...this.currentPosition };
     this.currentPosition = null;
-
-    return {
-      action: reason === "tp" ? "tp" : "sl",
-      position: closedPosition,
-      closedPnl: pnl,
-    };
+    return { action, position: closedPos, closedPnl: pnl };
   }
 
-  // ============================================
-  // 강제 청산
-  // ============================================
-
-  forceClose(currentPrice: number): ScalpTrade | null {
-    if (!this.currentPosition) return null;
-
-    const result = this.closePosition(currentPrice, "manual");
-    return result.position;
-  }
-
-  // ============================================
-  // 전략 제어
-  // ============================================
-
-  start(): void {
-    this.isRunning = true;
-    this.resetDailyStats();
-    console.log(`⚡ Scalping Strategy started for ${this.config.symbol}`);
-    console.log(`   Max daily trades: ${this.config.maxDailyTrades}`);
-    console.log(
-      `   TP: ${this.config.takeProfitPercent}% | SL: ${this.config.stopLossPercent}%`
-    );
-  }
-
-  stop(): void {
-    this.isRunning = false;
-    console.log(`🛑 Scalping Strategy stopped`);
-    console.log(`   Today's PnL: $${this.todayPnL.toFixed(2)}`);
-    console.log(`   Total PnL: $${this.totalPnL.toFixed(2)}`);
-  }
-
-  // ============================================
-  // 통계 조회
-  // ============================================
-
-  getStats(): ScalpingStats {
-    this.resetDailyStats();
-
+  /**
+   * 전체 관리 통계 조회
+   */
+  getStats(): StrategyStats {
     const todayWins = this.todayTrades.filter((t) => t.status === "won").length;
     const todayLosses = this.todayTrades.filter(
       (t) => t.status === "lost"
     ).length;
-
-    const allWins = this.allTrades.filter((t) => t.status === "won");
-    const allLosses = this.allTrades.filter((t) => t.status === "lost");
-
-    // 평균 홀딩 시간 계산
-    const closedTrades = this.allTrades.filter((t) => t.holdingTimeMs);
     const avgHoldingTime =
-      closedTrades.length > 0
-        ? closedTrades.reduce((sum, t) => sum + (t.holdingTimeMs || 0), 0) /
-          closedTrades.length
-        : 0;
+      this.todayTrades.reduce((acc, t) => acc + (t.holdingTimeMs || 0), 0) /
+      (this.todayTrades.length || 1);
 
     return {
-      totalTrades: this.allTrades.length,
-      wins: allWins.length,
-      losses: allLosses.length,
-      pnl: this.totalPnL,
-      totalPnL: this.totalPnL,
-      realizedPnL: this.totalPnL,
-      unrealizedPnL: 0, // 스캘핑은 빠른 청산이므로 미실현 PnL은 거의 없음
-      winRate:
-        this.allTrades.length > 0
-          ? allWins.length / (allWins.length + allLosses.length)
-          : 0,
+      totalTrades: this.todayTrades.length,
+      winRate: (todayWins / (this.todayTrades.length || 1)) * 100,
+      totalPnL: this.todayPnL,
       isRunning: this.isRunning,
-
-      // 스캘핑 전용 통계
-      todayTrades: this.todayTrades.length,
-      todayPnL: this.todayPnL,
-      todayWins,
-      todayLosses,
-      remainingTrades: this.config.maxDailyTrades - this.todayTrades.length,
-      averageHoldingTime: avgHoldingTime,
-      currentPosition: this.currentPosition
-        ? { ...this.currentPosition }
-        : null,
+      wins: todayWins,
+      losses: todayLosses,
     };
   }
 
   getConfig(): ScalpingConfig {
     return { ...this.config };
   }
-
-  getCurrentPosition(): ScalpTrade | null {
-    return this.currentPosition ? { ...this.currentPosition } : null;
-  }
-
-  getTodayTrades(): ScalpTrade[] {
-    return [...this.todayTrades];
-  }
 }
 
-// ============================================
-// 팩토리 함수 & 기본 설정
-// ============================================
-
+/**
+ * Scalping 전략 생성 헬퍼
+ */
 export function createScalpingStrategy(
   config: ScalpingConfig
 ): ScalpingStrategy {
   return new ScalpingStrategy(config);
 }
-
-export const DEFAULT_SCALPING_CONFIG: Partial<ScalpingConfig> = {
-  timeframe: "1m",
-  rsiLow: 25,
-  rsiHigh: 75,
-  takeProfitPercent: 0.4,
-  stopLossPercent: 0.25,
-  maxSpreadPercent: 0.05,
-  maxDailyTrades: 20,
-  maxDailyLoss: 50,
-  leverage: 5,
-  positionSizePercent: 10, // 자본의 10%
-};

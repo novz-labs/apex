@@ -199,6 +199,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         symbol: body.symbol,
         startDate: new Date(Date.now() - body.days * 24 * 60 * 60 * 1000),
         endDate: new Date(),
+        days: body.days,
         initialCapital: body.initialCapital,
         strategyType: "grid_bot",
         strategyParams: {
@@ -213,7 +214,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
       };
 
       const startTime = Date.now();
-      const result = runBacktest(config, candles);
+      const result = await runBacktest(config, candles);
       const executionTime = Date.now() - startTime;
 
       return {
@@ -277,6 +278,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         symbol: body.symbol,
         startDate: new Date(Date.now() - body.days * 24 * 60 * 60 * 1000),
         endDate: new Date(),
+        days: body.days,
         initialCapital: body.initialCapital,
         strategyType: "momentum",
         strategyParams: {
@@ -294,7 +296,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
       };
 
       const startTime = Date.now();
-      const result = runBacktest(config, candles);
+      const result = await runBacktest(config, candles);
       const executionTime = Date.now() - startTime;
 
       return {
@@ -506,6 +508,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
       // 백테스트 설정 구성
       const config: BacktestConfig = {
         symbol,
+        days: days || 7,
         startDate: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
         endDate: new Date(),
         initialCapital,
@@ -521,7 +524,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
       };
 
       const startTime = Date.now();
-      const result = runBacktest(config, candles);
+      const result = await runBacktest(config, candles);
       const executionTime = Date.now() - startTime;
 
       // 프리셋 통계 업데이트
