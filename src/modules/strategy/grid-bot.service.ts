@@ -84,7 +84,7 @@ export class GridBotStrategy {
   // 그리드 초기화
   // ============================================
 
-  initializeGrids(): GridOrder[] {
+  initializeGrids(currentPrice?: number): GridOrder[] {
     const { upperPrice, lowerPrice, gridCount, totalCapital, leverage } =
       this.config;
 
@@ -96,10 +96,12 @@ export class GridBotStrategy {
     for (let i = 0; i <= gridCount; i++) {
       const price = lowerPrice + gridSpacing * i;
 
+      const side = currentPrice && price > currentPrice ? "sell" : "buy";
+
       this.grids.push({
         id: `grid_${i}_${Date.now()}`,
         price,
-        side: "buy", // 초기에는 모두 매수 대기
+        side,
         size: sizePerGrid / price,
         status: "pending",
       });
@@ -108,7 +110,7 @@ export class GridBotStrategy {
     this.isRunning = true;
 
     console.log(
-      `📊 Grid initialized: ${gridCount} levels from $${lowerPrice.toFixed(2)} to $${upperPrice.toFixed(2)}`
+      `📊 Grid initialized: ${gridCount} levels from $${lowerPrice.toFixed(2)} to $${upperPrice.toFixed(2)}`,
     );
     console.log(`💰 Size per grid: $${sizePerGrid.toFixed(2)}`);
 
@@ -195,7 +197,7 @@ export class GridBotStrategy {
 
         // 엔트리 가격에서 제거
         const entryIndex = this.entryPrices.findIndex(
-          (p) => Math.abs(p - buyPrice) < 0.01
+          (p) => Math.abs(p - buyPrice) < 0.01,
         );
         if (entryIndex !== -1) {
           this.entryPrices.splice(entryIndex, 1);
@@ -212,7 +214,7 @@ export class GridBotStrategy {
 
         executedOrders.push({ ...grid });
         console.log(
-          `🔴 Grid SELL filled @ $${grid.price.toFixed(2)} | Profit: $${profit.toFixed(2)}`
+          `🔴 Grid SELL filled @ $${grid.price.toFixed(2)} | Profit: $${profit.toFixed(2)}`,
         );
       }
     }
@@ -244,7 +246,7 @@ export class GridBotStrategy {
 
   rebalance(newUpperPrice: number, newLowerPrice: number): GridOrder[] {
     console.log(
-      `🔄 Rebalancing grid from $${newLowerPrice.toFixed(2)} to $${newUpperPrice.toFixed(2)}`
+      `🔄 Rebalancing grid from $${newLowerPrice.toFixed(2)} to $${newUpperPrice.toFixed(2)}`,
     );
 
     // 기존 pending 주문 취소
@@ -296,7 +298,7 @@ export class GridBotStrategy {
       const toRemove = filledOrders.length - maxOrders;
       filledOrders
         .sort(
-          (a, b) => (a.filledAt?.getTime() || 0) - (b.filledAt?.getTime() || 0)
+          (a, b) => (a.filledAt?.getTime() || 0) - (b.filledAt?.getTime() || 0),
         )
         .slice(0, toRemove)
         .forEach((order) => {
@@ -311,7 +313,7 @@ export class GridBotStrategy {
   stop(): void {
     this.isRunning = false;
     console.log(
-      `⏹️ Grid bot stopped. Total PnL: $${this.getTotalPnL().toFixed(2)}`
+      `⏹️ Grid bot stopped. Total PnL: $${this.getTotalPnL().toFixed(2)}`,
     );
   }
 
@@ -331,7 +333,7 @@ export class GridBotStrategy {
   getStats(): any {
     const totalTrades = this.filledBuys + this.filledSells;
     const winTrades = this.grids.filter(
-      (g) => g.status === "filled" && g.pnl && g.pnl > 0
+      (g) => g.status === "filled" && g.pnl && g.pnl > 0,
     ).length;
 
     return {
@@ -358,6 +360,12 @@ export class GridBotStrategy {
 
   getPendingOrders(): GridOrder[] {
     return this.grids.filter((g) => g.status === "pending");
+  }
+
+  getGridSpacing(): number {
+    return (
+      (this.config.upperPrice - this.config.lowerPrice) / this.config.gridCount
+    );
   }
 }
 

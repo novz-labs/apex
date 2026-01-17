@@ -1,3 +1,4 @@
+import { cors } from "@elysiajs/cors";
 import { swagger } from "@elysiajs/swagger";
 import { Elysia } from "elysia";
 import { authGuard } from "./api/middleware/auth";
@@ -14,7 +15,7 @@ import {
 } from "./api/routes";
 import { aiService } from "./modules/ai";
 
-const app = new Elysia();
+const app = new Elysia().use(cors());
 
 // Swagger UI - Only in non-production
 if (process.env.NODE_ENV !== "production") {
@@ -46,7 +47,7 @@ if (process.env.NODE_ENV !== "production") {
         ],
       },
       path: "/swagger",
-    })
+    }),
   );
 }
 
@@ -68,7 +69,7 @@ app
         tags: ["Health"],
         summary: "헬스 체크",
       },
-    }
+    },
   )
 
   // Middleware
@@ -84,12 +85,11 @@ app
   .use(aiRoutes)
   .use(externalRoutes)
 
-  .listen(3000);
+  .listen(process.env.PORT || 4000);
 
-console.log(
-  `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`
-);
-console.log(`📚 Swagger UI: http://localhost:3000/swagger`);
+const port = app.server?.port;
+console.log(`🦊 Elysia is running at ${app.server?.hostname}:${port}`);
+console.log(`📚 Swagger UI: http://localhost:${port}/swagger`);
 
 // 스케줄러 시작
 initializeJobs();

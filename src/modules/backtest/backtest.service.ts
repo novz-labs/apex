@@ -55,7 +55,7 @@ export interface BacktestResult {
 
 export function generateSampleCandles(
   days: number,
-  startPrice: number = 40000
+  startPrice: number = 40000,
 ): CandleData[] {
   const candles: CandleData[] = [];
   const now = Date.now();
@@ -86,7 +86,7 @@ export function generateSampleCandles(
 export class BacktestEngine {
   constructor(
     private config: BacktestConfig,
-    private candles: CandleData[]
+    private candles: CandleData[],
   ) {}
 
   async run(): Promise<BacktestResult> {
@@ -102,37 +102,55 @@ export class BacktestEngine {
 
   private async runGridBot(
     equityCurve: Array<{ timestamp: number; equity: number }>,
-    trades: BacktestResult["trades"]
+    trades: BacktestResult["trades"],
   ): Promise<BacktestResult> {
     const strategy = createGridBot(this.config.strategyParams as GridConfig);
-    strategy.initializeGrids();
+    strategy.initializeGrids(this.candles[0]?.close);
 
     let balance = this.config.initialCapital;
     let peakBalance = balance;
     let maxDrawdown = 0;
+    const gridSpacing = strategy.getGridSpacing();
 
     for (const candle of this.candles) {
       const result = strategy.onPriceUpdate(candle.close);
 
-      // Grid Bot은 체결된 주문들을 통해 PnL 계산
+      // Grid Bot은 체결된 주문들을 통해 PnL 기록
       for (const order of result.executedOrders) {
-        // 실제 PnL은 매수/매도 짝이 맞아야 하지만 백테스트에서는 단순화하여 기록
-        // (Grid Bot은 보통 실시간 잔고를 관리하므로 여기서는 주문 체결 자체를 기록)
-        trades.push({
-          entryTime: candle.timestamp,
-          exitTime: candle.timestamp,
-          side: order.side === "buy" ? "grid_buy" : "grid_sell",
-          entryPrice: order.price,
-          exitPrice: order.price,
-          pnl: 0, // 그리드 간 차익을 계산해야 함 (단순화)
-          pnlPercent: 0,
-        });
+        if (order.side === "buy") {
+          trades.push({
+            entryTime: candle.timestamp,
+            exitTime: candle.timestamp,
+            side: "grid_buy",
+            entryPrice: order.price,
+            exitPrice: order.price + gridSpacing, // 목표 매도가 표시
+            pnl: 0,
+            pnlPercent: 0,
+          });
+        } else {
+          // sell의 경우 이전 매수가와의 차익 기록
+          const buyPrice = order.price - gridSpacing;
+          const profit = order.pnl || 0;
+
+          trades.push({
+            entryTime: candle.timestamp,
+            exitTime: candle.timestamp,
+            side: "grid_sell",
+            entryPrice: buyPrice,
+            exitPrice: order.price,
+            pnl: profit,
+            pnlPercent: (profit / this.config.initialCapital) * 100,
+          });
+        }
       }
+
+      // 실시간 미실현 PnL 포함 잔고 업데이트
+      balance = this.config.initialCapital + strategy.getTotalPnL();
 
       peakBalance = Math.max(peakBalance, balance);
       maxDrawdown = Math.max(
         maxDrawdown,
-        (peakBalance - balance) / (peakBalance || 1)
+        (peakBalance - balance) / (peakBalance || 1),
       );
       equityCurve.push({ timestamp: candle.timestamp, equity: balance });
     }
@@ -142,10 +160,10 @@ export class BacktestEngine {
 
   private async runMomentum(
     equityCurve: Array<{ timestamp: number; equity: number }>,
-    trades: BacktestResult["trades"]
+    trades: BacktestResult["trades"],
   ): Promise<BacktestResult> {
     const strategy = createMomentumStrategy(
-      this.config.strategyParams as MomentumConfig
+      this.config.strategyParams as MomentumConfig,
     );
     await strategy.start();
 
@@ -161,7 +179,7 @@ export class BacktestEngine {
 
       const indicators = indicatorService.calculateSnapshot(
         recent,
-        candle.close
+        candle.close,
       );
       if (!indicators) continue;
 
@@ -195,7 +213,7 @@ export class BacktestEngine {
       peakBalance = Math.max(peakBalance, balance);
       maxDrawdown = Math.max(
         maxDrawdown,
-        (peakBalance - balance) / (peakBalance || 1)
+        (peakBalance - balance) / (peakBalance || 1),
       );
       equityCurve.push({ timestamp: candle.timestamp, equity: balance });
     }
@@ -207,17 +225,18 @@ export class BacktestEngine {
     endBalance: number,
     maxDrawdown: number,
     trades: BacktestResult["trades"],
-    equityCurve: Array<{ timestamp: number; equity: number }>
+    equityCurve: Array<{ timestamp: number; equity: number }>,
   ): BacktestResult {
     const totalReturn = endBalance - this.config.initialCapital;
     const totalReturnPercent = (totalReturn / this.config.initialCapital) * 100;
 
     const winTrades = trades.filter((t) => t.pnl > 0);
-    const lossTrades = trades.filter((t) => t.pnl <= 0);
+    const lossTrades = trades.filter((t) => t.pnl < 0); // 0은 제외
 
     const winCount = winTrades.length;
     const lossCount = lossTrades.length;
-    const winRate = (winCount / (trades.length || 1)) * 100;
+    const totalCount = winCount + lossCount; // 실제 승패가 난 거래만 합산
+    const winRate = totalCount > 0 ? (winCount / totalCount) * 100 : 0;
 
     const totalWin = winTrades.reduce((sum, t) => sum + t.pnl, 0);
     const totalLoss = Math.abs(lossTrades.reduce((sum, t) => sum + t.pnl, 0));
@@ -247,7 +266,7 @@ export class BacktestEngine {
 
 export async function runBacktest(
   config: BacktestConfig,
-  candles: CandleData[]
+  candles: CandleData[],
 ): Promise<BacktestResult> {
   const engine = new BacktestEngine(config, candles);
   return await engine.run();

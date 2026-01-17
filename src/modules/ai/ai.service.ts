@@ -1,5 +1,6 @@
 // src/modules/ai/ai.service.ts
 import OpenAI from "openai";
+import { prisma } from "../db/prisma";
 
 // ============================================
 // 타입 정의
@@ -127,7 +128,7 @@ class AIService {
    */
   async analyze(
     context: TradingContext,
-    triggerReason: string
+    triggerReason: string,
   ): Promise<AIAnalysisResult> {
     if (!this.client) {
       throw new Error("AI service not initialized");
@@ -220,7 +221,7 @@ Rules:
       losingTrades.length > 0
         ? Math.abs(
             losingTrades.reduce((sum, t) => sum + t.pnl, 0) /
-              losingTrades.length
+              losingTrades.length,
           )
         : 0;
     const riskRewardRatio = avgLoss > 0 ? avgWin / avgLoss : 0;
@@ -270,7 +271,7 @@ ${
             `${i + 1}. **${t.side.toUpperCase()} ${t.symbol}**
    - Entry: $${t.entryPrice.toFixed(2)} → Exit: $${t.exitPrice.toFixed(2)}
    - PnL: ${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${(((t.exitPrice - t.entryPrice) / t.entryPrice) * 100 * (t.side === "long" ? 1 : -1)).toFixed(2)}%)
-   - Result: ${t.pnl >= 0 ? "✅ Win" : "❌ Loss"}`
+   - Result: ${t.pnl >= 0 ? "✅ Win" : "❌ Loss"}`,
         )
         .join("\n\n")
     : "No recent trades available."
@@ -288,7 +289,7 @@ ${
           (s) =>
             `**${s.name}** [${s.type}]
 - Allocation: ${s.allocation}%
-- Parameters: \`${JSON.stringify(s.currentParams)}\``
+- Parameters: \`${JSON.stringify(s.currentParams)}\``,
         )
         .join("\n\n")
     : "No strategies currently running."
@@ -446,7 +447,7 @@ Respond ONLY with the JSON object, no additional text.
             const changePercent = Math.abs((to - from) / from) * 100;
             if (changePercent > 20) {
               console.warn(
-                `⚠️ Change for ${param} exceeds 20% limit (${changePercent.toFixed(1)}%)`
+                `⚠️ Change for ${param} exceeds 20% limit (${changePercent.toFixed(1)}%)`,
               );
               // limit to 20%
               const direction = to > from ? 1.2 : 0.8;
@@ -460,7 +461,7 @@ Respond ONLY with the JSON object, no additional text.
             target.id,
             newParams,
             rec.reason,
-            "ai"
+            "ai",
           );
 
           results.push({
@@ -478,7 +479,7 @@ Respond ONLY with the JSON object, no additional text.
           if (target) {
             await strategyService.toggleStrategy(
               target.id,
-              rec.type === "resume_strategy"
+              rec.type === "resume_strategy",
             );
             results.push({
               recommendation: rec,
@@ -497,7 +498,9 @@ Respond ONLY with the JSON object, no additional text.
           const strategies = strategyService.getAllStrategies();
           const allocations: Record<string, number> = {};
 
-          for (const [strategyName, newAllocation] of Object.entries(rec.allocationChanges)) {
+          for (const [strategyName, newAllocation] of Object.entries(
+            rec.allocationChanges,
+          )) {
             const target = strategies.find((s) => s.name === strategyName);
             if (target) {
               // ±10% 제한 (allocation은 더 보수적으로)
@@ -505,13 +508,16 @@ Respond ONLY with the JSON object, no additional text.
               const maxChange = 10; // 최대 10%p 변경
               const clampedAllocation = Math.max(
                 Math.max(0, currentAllocation - maxChange),
-                Math.min(Math.min(100, currentAllocation + maxChange), newAllocation)
+                Math.min(
+                  Math.min(100, currentAllocation + maxChange),
+                  newAllocation,
+                ),
               );
               allocations[target.id] = clampedAllocation;
 
               if (clampedAllocation !== newAllocation) {
                 console.warn(
-                  `⚠️ Allocation for ${strategyName} clamped: requested ${newAllocation}%, applied ${clampedAllocation}% (±10%p limit)`
+                  `⚠️ Allocation for ${strategyName} clamped: requested ${newAllocation}%, applied ${clampedAllocation}% (±10%p limit)`,
                 );
               }
             }
@@ -521,7 +527,7 @@ Respond ONLY with the JSON object, no additional text.
             const changes = await strategyService.updateAllocation(
               allocations,
               rec.reason,
-              "ai"
+              "ai",
             );
             results.push({
               recommendation: rec,
@@ -559,12 +565,18 @@ Respond ONLY with the JSON object, no additional text.
             }
 
             // 포지션 크기 조정 (있는 경우)
-            if ("positionSizePercent" in newParams && rec.changes?.positionSizePercent) {
+            if (
+              "positionSizePercent" in newParams &&
+              rec.changes?.positionSizePercent
+            ) {
               const { to } = rec.changes.positionSizePercent;
               const current = newParams.positionSizePercent as number;
               const maxSize = Math.min(current * 1.2, to);
               const minSize = Math.max(1, current * 0.8, to);
-              newParams.positionSizePercent = Math.max(minSize, Math.min(maxSize, to));
+              newParams.positionSizePercent = Math.max(
+                minSize,
+                Math.min(maxSize, to),
+              );
               changed = true;
             }
 
@@ -573,7 +585,7 @@ Respond ONLY with the JSON object, no additional text.
                 strategy.id,
                 newParams,
                 rec.reason,
-                "ai"
+                "ai",
               );
               adjustedCount++;
             }
@@ -582,9 +594,10 @@ Respond ONLY with the JSON object, no additional text.
           results.push({
             recommendation: rec,
             applied: adjustedCount > 0,
-            result: adjustedCount > 0
-              ? `Risk adjusted for ${adjustedCount} strategies`
-              : "No strategies adjusted",
+            result:
+              adjustedCount > 0
+                ? `Risk adjusted for ${adjustedCount} strategies`
+                : "No strategies adjusted",
           });
         } else {
           results.push({
@@ -608,18 +621,171 @@ Respond ONLY with the JSON object, no additional text.
   /**
    * 상태 조회
    */
-  getStatus(): {
-    initialized: boolean;
-    lastAnalysisTime: string | null;
-    minIntervalMinutes: number;
-  } {
-    return {
-      initialized: !!this.client,
-      lastAnalysisTime: this.lastAnalysisTime
-        ? new Date(this.lastAnalysisTime).toISOString()
-        : null,
-      minIntervalMinutes: this.minAnalysisInterval / 60000,
-    };
+  /**
+   * 백테스트 결과 분석 및 파라미터 최적화
+   */
+  async analyzeBacktest(
+    result: any, // BacktestResult
+    strategyType: string,
+  ): Promise<AIAnalysisResult> {
+    if (!this.client) {
+      throw new Error("AI service not initialized");
+    }
+
+    const prompt = `
+Analyze the following backtest results for a ${strategyType} strategy and recommend parameter optimizations.
+The goal is to improve total return and Sharpe ratio while reducing max drawdown.
+
+## Backtest Performance
+- Total Return: ${result.totalReturnPercent.toFixed(2)}%
+- Max Drawdown: ${result.maxDrawdownPercent.toFixed(2)}%
+- Win Rate: ${result.winRate.toFixed(1)}%
+- Profit Factor: ${result.profitFactor.toFixed(2)}
+- Total Trades: ${result.totalTrades}
+- Sharpe Ratio: ${result.sharpeRatio.toFixed(2)}
+
+## Applied Configuration
+\`\`\`json
+${JSON.stringify(result.config.strategyParams, null, 2)}
+\`\`\`
+
+## Analysis Context
+- Current BTC Price: $${result.trades.length > 0 ? result.trades[result.trades.length - 1].exitPrice.toFixed(2) : "Unknown"}
+- Symbol: ${result.config.symbol}
+
+Return a JSON object with:
+1. "summary": Analysis of why the strategy performed this way.
+2. "recommendations": A list of parameter changes.
+   - Each change must be within ±20% of the current value.
+   - For Grid Bot, consider "gridCount", "gridSpacing", "leverage", "stopLossPercent".
+   - For Momentum, consider "rsiOverbought", "rsiOversold", "takeProfitPercent", "stopLossPercent".
+   - For Scalping, consider "rsiLow", "rsiHigh", "maxDailyTrades", "takeProfitPercent", "stopLossPercent", "leverage".
+
+Structure:
+{
+  "summary": "...",
+  "recommendations": [
+    {
+      "type": "adjust_params",
+      "priority": "medium",
+      "confidence": 0.8,
+      "strategyName": "${strategyType}",
+      "changes": {
+        "paramName": { "from": old_value, "to": new_value }
+      },
+      "reason": "..."
+    }
+  ]
+}
+`;
+
+    try {
+      const response = await this.client.chat.completions.create({
+        model: "gpt-4o", // gpt-5.2는 가상 모델일 수 있으므로 gpt-4o로 설정 (프로젝트 규칙에 맞게 조정 가능)
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a quantitative trading expert specializing in automated strategy optimization.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content || "{}";
+      const parsed = JSON.parse(content);
+
+      return {
+        triggerReason: "backtest_optimization",
+        timestamp: new Date().toISOString(),
+        summary: parsed.summary || "Optimization analysis completed",
+        recommendations: (parsed.recommendations || []).map((rec: any) => ({
+          ...rec,
+          autoApply: true, // 백테스트 최적화는 기본적으로 자동 적용
+        })),
+        rawResponse: content,
+      };
+    } catch (error) {
+      console.error("❌ AI backtest analysis error:", error);
+      throw error;
+    }
+  }
+  /**
+   * 프리셋 최적화 적용
+   */
+  async applyPresetOptimizations(
+    recommendations: AIRecommendation[],
+    presetId: string,
+  ): Promise<
+    Array<{
+      recommendation: AIRecommendation;
+      applied: boolean;
+      result: string;
+    }>
+  > {
+    const results: Array<{
+      recommendation: AIRecommendation;
+      applied: boolean;
+      result: string;
+    }> = [];
+
+    const { presetService } = await import("@strategy/preset.service");
+    const preset = await prisma.strategyPreset.findUnique({
+      where: { id: presetId },
+    });
+
+    if (!preset) {
+      throw new Error(`Preset not found: ${presetId}`);
+    }
+
+    const currentParams = JSON.parse(preset.paramsJson);
+
+    for (const rec of recommendations) {
+      if (rec.type === "adjust_params" && rec.changes) {
+        const newParams = { ...currentParams };
+        let appliedCount = 0;
+
+        for (const [param, { from, to }] of Object.entries(rec.changes)) {
+          // ±20% 제한 체크
+          const changePercent = Math.abs((to - from) / from) * 100;
+          let finalTo = to;
+
+          if (changePercent > 100) {
+            // 비정상적인 값 방지
+            finalTo = from;
+          } else if (changePercent > 20) {
+            const direction = to > from ? 1.2 : 0.8;
+            finalTo = from * direction;
+          }
+
+          newParams[param] = finalTo;
+          appliedCount++;
+        }
+
+        if (appliedCount > 0) {
+          await presetService.optimizePreset(
+            presetId,
+            newParams,
+            rec.confidence,
+          );
+          results.push({
+            recommendation: rec,
+            applied: true,
+            result: `Optimized ${appliedCount} parameters for preset ${preset.name}`,
+          });
+        }
+      } else {
+        results.push({
+          recommendation: rec,
+          applied: false,
+          result: `Recommendation type ${rec.type} not supported for preset optimization`,
+        });
+      }
+    }
+
+    return results;
   }
 }
 

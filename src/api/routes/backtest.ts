@@ -1,5 +1,6 @@
 // src/api/routes/backtest.ts
 import { Elysia, t } from "elysia";
+import { aiService } from "../../modules/ai";
 import {
   generateSampleCandles,
   runBacktest,
@@ -22,7 +23,7 @@ const StrategyTypeEnum = t.Union(
     t.Literal("scalping"),
     t.Literal("funding_arb"),
   ],
-  { default: "momentum", description: "전략 타입" }
+  { default: "momentum", description: "전략 타입" },
 );
 
 const PresetNameEnum = t.Union(
@@ -31,7 +32,7 @@ const PresetNameEnum = t.Union(
     t.Literal("conservative"),
     t.Literal("aggressive"),
   ],
-  { default: "recommended", description: "프리셋 이름" }
+  { default: "recommended", description: "프리셋 이름" },
 );
 
 const SymbolEnum = t.Union(
@@ -42,7 +43,7 @@ const SymbolEnum = t.Union(
     t.Literal("ARB"),
     t.Literal("DOGE"),
   ],
-  { default: "BTC", description: "거래 심볼" }
+  { default: "BTC", description: "거래 심볼" },
 );
 
 const DataSourceEnum = t.Union([t.Literal("real"), t.Literal("simulated")]);
@@ -124,10 +125,10 @@ const MomentumBacktestSchema = t.Object({
     description: "트레일링스탑 (%)",
   }),
   rsiOversold: t.Optional(
-    t.Number({ default: 30, description: "RSI 과매도 기준" })
+    t.Number({ default: 30, description: "RSI 과매도 기준" }),
   ),
   rsiOverbought: t.Optional(
-    t.Number({ default: 70, description: "RSI 과매수 기준" })
+    t.Number({ default: 70, description: "RSI 과매수 기준" }),
   ),
 });
 
@@ -137,7 +138,7 @@ const MomentumBacktestSchema = t.Object({
 
 async function fetchHistoricalCandles(
   symbol: string,
-  days: number
+  days: number,
 ): Promise<CandleData[]> {
   try {
     const client = getInfoClient();
@@ -191,7 +192,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         // Fallback: 샘플 데이터 (실제 데이터 실패 시)
         candles = generateSampleCandles(
           body.days,
-          (body.upperPrice + body.lowerPrice) / 2
+          (body.upperPrice + body.lowerPrice) / 2,
         );
       }
 
@@ -257,7 +258,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         summary: "Grid Bot 백테스트",
         description: "Grid Bot 전략 백테스트 실행",
       },
-    }
+    },
   )
 
   // Momentum 백테스트
@@ -338,7 +339,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         summary: "Momentum 백테스트",
         description: "Momentum 전략 백테스트 실행",
       },
-    }
+    },
   )
 
   // 권장 백테스트 설정
@@ -415,7 +416,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         summary: "백테스트 권장 설정",
         description: "전략별 권장 백테스트 기간 및 파라미터",
       },
-    }
+    },
   )
 
   // 히스토리 데이터 조회
@@ -449,7 +450,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         summary: "히스토리 캔들 조회",
         description: "Hyperliquid에서 히스토리 캔들 데이터 조회",
       },
-    }
+    },
   )
 
   // 프리셋 기반 백테스트 (권장!)
@@ -462,7 +463,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
       const presetData = await presetService.getPreset(
         strategyType as StrategyType,
         preset,
-        symbol
+        symbol,
       );
 
       if (!presetData) {
@@ -533,6 +534,33 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         winRate: result.winRate,
       });
 
+      // AI 최적화 (피드백 루프)
+      let optimizationResult = null;
+      if (body.optimize && result.totalTrades > 0) {
+        try {
+          const analysis = await aiService.analyzeBacktest(
+            result,
+            strategyType,
+          );
+          const applied = await aiService.applyPresetOptimizations(
+            analysis.recommendations,
+            presetData.id,
+          );
+
+          optimizationResult = {
+            summary: analysis.summary,
+            recommendations: analysis.recommendations,
+            applied,
+          };
+        } catch (error) {
+          console.error("AI Optimization failed:", error);
+          optimizationResult = {
+            error: "AI Optimization failed",
+            details: String(error),
+          };
+        }
+      }
+
       return {
         strategy: strategyType,
         preset: preset,
@@ -561,6 +589,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
           avgWinRate: presetData.avgWinRate,
           aiConfidence: presetData.aiConfidence,
         },
+        optimizationResult,
         recentTrades: result.trades.slice(-5),
       };
     },
@@ -580,6 +609,9 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
           default: 1000,
           description: "초기 자본금 ($)",
         }),
+        optimize: t.Optional(
+          t.Boolean({ default: false, description: "AI 최적화 여부" }),
+        ),
       }),
       detail: {
         tags: ["Backtest"],
@@ -587,7 +619,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         description:
           "권장 프리셋으로 간편하게 백테스트 실행. 전략/프리셋/심볼 드롭다운에서 선택.",
       },
-    }
+    },
   )
 
   // 프리셋 목록 조회
@@ -595,7 +627,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
     "/presets/:strategyType",
     async ({ params }) => {
       const presets = await presetService.getPresetsByType(
-        params.strategyType as StrategyType
+        params.strategyType as StrategyType,
       );
 
       return {
@@ -623,7 +655,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         summary: "프리셋 목록 조회",
         description: "전략 타입별 사용 가능한 프리셋 목록",
       },
-    }
+    },
   )
 
   // 프리셋 시드 (초기화)
@@ -643,5 +675,5 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         summary: "기본 프리셋 시드",
         description: "모든 전략의 기본 프리셋을 DB에 초기화",
       },
-    }
+    },
   );
