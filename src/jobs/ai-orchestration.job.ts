@@ -48,14 +48,14 @@ export async function runAIOrchestration(): Promise<{
 
     // 4. 추천 사항 적용
     const results = await aiService.applyRecommendations(
-      analysis.recommendations
+      analysis.recommendations,
     );
 
     const appliedCount = results.filter((r) => r.applied).length;
     const pendingCount = results.filter((r) => !r.applied).length;
 
     console.log(
-      `✅ [AI Orchestration] Applied: ${appliedCount}, Pending: ${pendingCount}`
+      `✅ [AI Orchestration] Applied: ${appliedCount}, Pending: ${pendingCount}`,
     );
 
     // 5. 결과 DB 저장
@@ -63,7 +63,7 @@ export async function runAIOrchestration(): Promise<{
 
     // 6. 알림 전송 (중요 추천이 있는 경우)
     const criticalRecs = analysis.recommendations.filter(
-      (r) => r.priority === "critical" || r.priority === "high"
+      (r) => r.priority === "critical" || r.priority === "high",
     );
 
     if (criticalRecs.length > 0) {
@@ -110,13 +110,16 @@ async function gatherTradingContext(): Promise<TradingContext> {
   // 성과 지표 계산
   const performance = calculatePerformance(recentTrades);
 
-  // 전략 상태
+  // 전략 상태 (isAgentic이 true인 전략만 집중 분석 대상)
   const strategies = strategyService.getAllStrategies().map((s) => ({
+    id: s.id,
     name: s.name,
     type: s.type as "grid_bot" | "momentum" | "scalping" | "funding_arb",
     isRunning: s.enabled,
+    isAgentic: s.isAgentic,
     allocation: s.allocation,
     currentParams: extractNumericParams(s.strategy.getConfig()),
+    stats: s.strategy.getStats(), // 개별 전략의 현재 성과 지표 추가
   }));
 
   // 시장 데이터
@@ -223,7 +226,7 @@ function extractNumericParams(config: any): Record<string, number> {
 
 async function saveAnalysisResult(
   analysis: any,
-  results: Array<{ applied: boolean; result: string }>
+  results: Array<{ applied: boolean; result: string }>,
 ): Promise<void> {
   await prisma.aIAnalysis.create({
     data: {
@@ -269,7 +272,7 @@ export async function runRiskCheck(): Promise<{
         paused.push(strategy.name);
 
         console.log(
-          `🚨 [Risk Check] Paused ${strategy.name}: Drawdown limit exceeded`
+          `🚨 [Risk Check] Paused ${strategy.name}: Drawdown limit exceeded`,
         );
 
         await telegramService.notifyAlert({

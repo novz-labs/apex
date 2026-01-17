@@ -621,6 +621,18 @@ Respond ONLY with the JSON object, no additional text.
   /**
    * 상태 조회
    */
+  getStatus(): {
+    initialized: boolean;
+    lastAnalysisTime: number;
+    minAnalysisInterval: number;
+  } {
+    return {
+      initialized: this.client !== null,
+      lastAnalysisTime: this.lastAnalysisTime,
+      minAnalysisInterval: this.minAnalysisInterval,
+    };
+  }
+
   /**
    * 백테스트 결과 분석 및 파라미터 최적화
    */

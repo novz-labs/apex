@@ -24,6 +24,7 @@ model Strategy {
   profitFactor  Float    @default(0)
   totalPnl      Float    @default(0)
   totalTrades   Int      @default(0)
+  isAgentic     Boolean  @default(false) // AI 자율 운영 여부
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

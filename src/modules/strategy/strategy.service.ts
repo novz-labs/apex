@@ -14,6 +14,7 @@ export interface StrategyInstance {
   type: string;
   strategy: TradingStrategy;
   enabled: boolean;
+  isAgentic: boolean;
   allocation: number; // 자본 배분 %
 }
 
@@ -60,6 +61,7 @@ class StrategyService {
         type: dbEntry.type as StrategyType,
         strategy: strategyInstance,
         enabled: dbEntry.enabled,
+        isAgentic: dbEntry.isAgentic,
         allocation: dbEntry.allocation ?? 0,
       });
     }
@@ -77,6 +79,7 @@ class StrategyService {
         type,
         paramsJson: JSON.stringify(params),
         enabled: false,
+        isAgentic: params.isAgentic ?? true, // 기본적으로 에이전트 모드 활성
       },
     });
 
@@ -100,6 +103,7 @@ class StrategyService {
       type,
       strategy: instance,
       enabled: false,
+      isAgentic: dbEntry.isAgentic,
       allocation: 0,
     });
 
@@ -152,7 +156,7 @@ class StrategyService {
     id: string,
     newParams: any,
     reason: string,
-    source: string = "ai"
+    source: string = "ai",
   ) {
     const instance = this.activeStrategies.get(id);
     if (!instance) throw new Error("Strategy not found");
@@ -197,7 +201,9 @@ class StrategyService {
         if (wasEnabled) instance.strategy.start();
         break;
       case "funding_arb":
-        instance.strategy = new FundingArbStrategy(newParams as FundingArbConfig);
+        instance.strategy = new FundingArbStrategy(
+          newParams as FundingArbConfig,
+        );
         if (wasEnabled) instance.strategy.start();
         break;
     }
@@ -212,12 +218,15 @@ class StrategyService {
   async updateAllocation(
     allocations: Record<string, number>,
     reason: string,
-    source: string = "ai"
+    source: string = "ai",
   ): Promise<AllocationChange[]> {
     const changes: AllocationChange[] = [];
 
     // 총 배분이 100%를 넘지 않는지 검증
-    const totalAllocation = Object.values(allocations).reduce((sum, v) => sum + v, 0);
+    const totalAllocation = Object.values(allocations).reduce(
+      (sum, v) => sum + v,
+      0,
+    );
     if (totalAllocation > 100) {
       throw new Error(`Total allocation exceeds 100%: ${totalAllocation}%`);
     }
@@ -259,7 +268,7 @@ class StrategyService {
       });
 
       console.log(
-        `📊 Allocation changed: ${instance.name} ${previousAllocation}% → ${newAllocation}%`
+        `📊 Allocation changed: ${instance.name} ${previousAllocation}% → ${newAllocation}%`,
       );
     }
 
@@ -269,7 +278,10 @@ class StrategyService {
   /**
    * 전략별 자본 배분 비율에 따른 실제 자본 계산
    */
-  calculateCapitalForStrategy(strategyId: string, totalCapital: number): number {
+  calculateCapitalForStrategy(
+    strategyId: string,
+    totalCapital: number,
+  ): number {
     const instance = this.activeStrategies.get(strategyId);
     if (!instance) return 0;
 
@@ -280,7 +292,13 @@ class StrategyService {
    * 모든 전략의 자본 배분 현황 조회
    */
   getAllocationSummary(): {
-    strategies: Array<{ id: string; name: string; type: string; allocation: number; enabled: boolean }>;
+    strategies: Array<{
+      id: string;
+      name: string;
+      type: string;
+      allocation: number;
+      enabled: boolean;
+    }>;
     totalAllocated: number;
     unallocated: number;
   } {
@@ -308,7 +326,7 @@ class StrategyService {
     id: string,
     partialParams: Record<string, number>,
     reason: string,
-    source: string = "ai"
+    source: string = "ai",
   ) {
     const instance = this.activeStrategies.get(id);
     if (!instance) throw new Error("Strategy not found");
@@ -333,7 +351,7 @@ class StrategyService {
         const maxChange = Math.abs(oldValue) * 0.2;
         const clampedValue = Math.max(
           oldValue - maxChange,
-          Math.min(oldValue + maxChange, newValue)
+          Math.min(oldValue + maxChange, newValue),
         );
 
         newParams[key] = clampedValue;
@@ -341,7 +359,7 @@ class StrategyService {
 
         if (clampedValue !== newValue) {
           console.warn(
-            `⚠️ Parameter ${key} clamped: requested ${newValue}, applied ${clampedValue} (±20% limit)`
+            `⚠️ Parameter ${key} clamped: requested ${newValue}, applied ${clampedValue} (±20% limit)`,
           );
         }
       } else {
@@ -362,7 +380,9 @@ class StrategyService {
   }
 
   getStrategyByName(name: string) {
-    return Array.from(this.activeStrategies.values()).find((s) => s.name === name);
+    return Array.from(this.activeStrategies.values()).find(
+      (s) => s.name === name,
+    );
   }
 
   getAllStrategies() {

@@ -6,7 +6,10 @@ import {
 } from "@strategy/momentum.service";
 import { Elysia, t } from "elysia";
 
+import { prisma } from "@db/prisma";
+import { presetService } from "@strategy/preset.service";
 import { strategyService } from "@strategy/strategy.service";
+import { getInfoClient } from "../../modules/hyperliquid";
 
 // ============================================
 // 스키마 정의
@@ -66,17 +69,17 @@ const IndicatorSnapshotSchema = t.Object({
 // ============================================
 
 export const strategyRoutes = new Elysia({ prefix: "/strategy" })
-  // ============================================
-  // 전략 목록 조회
-  // ============================================
   .get(
     "/",
-    async () => {
-      const strategies = strategyService.getAllStrategies().map((s) => ({
+    () => {
+      const all = strategyService.getAllStrategies();
+      const strategies = all.map((s) => ({
         id: s.id,
         name: s.name,
         type: s.type,
-        isRunning: s.enabled,
+        enabled: s.enabled,
+        isAgentic: s.isAgentic,
+        allocation: s.allocation,
       }));
       return { strategies, count: strategies.length };
     },
@@ -86,7 +89,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
         summary: "전략 목록 조회",
         description: "DB에 저장된 모든 전략 목록",
       },
-    }
+    },
   )
 
   // ============================================
@@ -100,7 +103,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
       const dbEntry = await strategyService.createStrategy(
         name,
         "grid_bot",
-        config
+        config,
       );
 
       const instance = strategyService.getStrategy(dbEntry.id)!;
@@ -120,7 +123,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
         tags: ["Strategy"],
         summary: "Grid Bot 전략 생성",
       },
-    }
+    },
   )
 
   // ============================================
@@ -138,7 +141,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
       const dbEntry = await strategyService.createStrategy(
         name,
         "momentum",
-        config
+        config,
       );
 
       return {
@@ -155,7 +158,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
         tags: ["Strategy"],
         summary: "Momentum 전략 생성",
       },
-    }
+    },
   )
 
   // ============================================
@@ -178,6 +181,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
         name: instance.name,
         type: instance.type,
         enabled: instance.enabled,
+        isAgentic: instance.isAgentic,
         config,
         stats,
       };
@@ -188,7 +192,39 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
         tags: ["Strategy"],
         summary: "전략 상세 조회",
       },
-    }
+    },
+  )
+
+  /**
+   * 에이전트 모드 (자율 최적화) 토글
+   */
+  .post(
+    "/:id/agentic",
+    async ({ params, body, set }) => {
+      try {
+        const instance = strategyService.getStrategy(params.id);
+        if (!instance) throw new Error("Strategy not found");
+
+        await prisma.strategy.update({
+          where: { id: params.id },
+          data: { isAgentic: body.enabled },
+        });
+
+        instance.isAgentic = body.enabled;
+        return { id: params.id, isAgentic: body.enabled };
+      } catch (e: any) {
+        set.status = 404;
+        return { message: e.message };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      body: t.Object({ enabled: t.Boolean() }),
+      detail: {
+        tags: ["Strategy"],
+        summary: "에이전트 자율 모드 토글",
+      },
+    },
   )
 
   // ============================================
@@ -211,7 +247,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
         tags: ["Strategy"],
         summary: "전략 시작",
       },
-    }
+    },
   )
 
   .post(
@@ -231,7 +267,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
         tags: ["Strategy"],
         summary: "전략 중지",
       },
-    }
+    },
   )
 
   // ============================================
@@ -261,7 +297,7 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
         tags: ["Strategy"],
         summary: "가격 업데이트",
       },
-    }
+    },
   )
 
   // ============================================
@@ -284,5 +320,103 @@ export const strategyRoutes = new Elysia({ prefix: "/strategy" })
         tags: ["Strategy"],
         summary: "전략 삭제",
       },
-    }
+    },
+  )
+  // ============================================
+  // 프리셋 기반 전략 배포 (Deploy from Preset)
+  // ============================================
+  .post(
+    "/deploy-preset",
+    async ({ body, set }) => {
+      const { strategyType, presetName, symbol } = body;
+
+      // 1. 프리셋 조회
+      const preset = await presetService.getPreset(
+        strategyType as any,
+        presetName,
+        symbol,
+      );
+      if (!preset) {
+        set.status = 404;
+        return {
+          message: `Preset '${presetName}' for ${strategyType} not found`,
+        };
+      }
+
+      // 2. 파라미터 보강 (Grid Bot의 경우 upper/lower price 자동 계산)
+      const params = { ...preset.params };
+      let currentPrice = 0;
+
+      if (strategyType === "grid_bot") {
+        try {
+          const info = getInfoClient();
+          const hlSymbol = symbol === "*" ? "BTC" : symbol;
+          const l2 = await info.l2Book({ coin: hlSymbol });
+          if (l2 && l2.levels && l2.levels[0] && l2.levels[0][0]) {
+            currentPrice = parseFloat(l2.levels[0][0].px);
+          }
+
+          // 만약 upperPrice/lowerPrice가 없으면 현재가 기준으로 계산
+          if (!params.upperPrice || !params.lowerPrice) {
+            const count = params.gridCount || 10;
+            const spacing = params.gridSpacing || 1.0; // 1% spacing
+            const halfRangePercent = (spacing * count) / 2 / 100;
+
+            params.lowerPrice = currentPrice * (1 - halfRangePercent);
+            params.upperPrice = currentPrice * (1 + halfRangePercent);
+            console.log(
+              `🤖 Calculated Grid Range: ${params.lowerPrice.toFixed(2)} - ${params.upperPrice.toFixed(2)} based on price ${currentPrice}`,
+            );
+          }
+        } catch (e) {
+          console.warn("Failed to fetch price for grid init", e);
+          // 기본값이라도 설정 (BTC 기준 예시)
+          if (!params.upperPrice) params.upperPrice = 105000;
+          if (!params.lowerPrice) params.lowerPrice = 95000;
+        }
+      }
+
+      // 3. 전략 생성
+      const name = `${strategyType}_${presetName}_${symbol}_${Date.now()}`;
+      const dbEntry = await strategyService.createStrategy(
+        name,
+        strategyType as any,
+        params,
+      );
+
+      // 4. 전략 활성화 (Start)
+      await strategyService.toggleStrategy(dbEntry.id, true);
+
+      // 5. Grid Bot 초기화
+      const instance = strategyService.getStrategy(dbEntry.id)!;
+      if (strategyType === "grid_bot") {
+        (instance.strategy as GridBotStrategy).initializeGrids(currentPrice);
+      }
+
+      return {
+        id: dbEntry.id,
+        name: dbEntry.name,
+        type: strategyType,
+        config: params,
+        message: "Bot deployed successfully from optimized preset",
+      };
+    },
+    {
+      body: t.Object({
+        strategyType: t.String({
+          description: "전략 타입 (grid_bot, momentum 등)",
+        }),
+        presetName: t.String({
+          default: "recommended",
+          description: "프리셋 이름",
+        }),
+        symbol: t.String({ default: "BTC", description: "심볼" }),
+      }),
+      detail: {
+        tags: ["Strategy"],
+        summary: "프리셋 기반 봇 배포",
+        description:
+          "최적화된 프리셋 설정을 사용하여 즉시 실매매 봇을 가동합니다.",
+      },
+    },
   );

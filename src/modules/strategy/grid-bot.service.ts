@@ -110,9 +110,9 @@ export class GridBotStrategy {
     this.isRunning = true;
 
     console.log(
-      `📊 Grid initialized: ${gridCount} levels from $${lowerPrice.toFixed(2)} to $${upperPrice.toFixed(2)}`,
+      `📊 Grid initialized: ${gridCount} levels from $${(lowerPrice || 0).toFixed(2)} to $${(upperPrice || 0).toFixed(2)}`,
     );
-    console.log(`💰 Size per grid: $${sizePerGrid.toFixed(2)}`);
+    console.log(`💰 Size per grid: $${(sizePerGrid || 0).toFixed(2)}`);
 
     return [...this.grids];
   }
