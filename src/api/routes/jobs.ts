@@ -113,11 +113,22 @@ export const jobsRoutes = new Elysia({ prefix: "/jobs" })
       }
     },
     {
-      params: t.Object({ jobName: t.String() }),
+      params: t.Object({
+        jobName: t.Union(
+          [
+            t.Literal("candle-collector"),
+            t.Literal("sentiment-updater"),
+            t.Literal("daily-snapshot"),
+            t.Literal("ai-orchestration"),
+            t.Literal("risk-check"),
+          ],
+          { description: "실행할 Job 이름" }
+        ),
+      }),
       detail: {
         tags: ["Jobs"],
         summary: "Job 수동 실행",
-        description: "특정 Job을 즉시 실행",
+        description: "특정 Job을 즉시 실행. 드롭다운에서 Job 선택.",
       },
     }
   )

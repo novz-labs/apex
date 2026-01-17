@@ -89,6 +89,10 @@ initializeJobs();
 import { strategyService } from "@strategy/strategy.service";
 await strategyService.loadStrategies();
 
+// 프리셋 시드 (기본 권장 설정)
+import { presetService } from "./modules/strategy/preset.service";
+await presetService.seedDefaultPresets();
+
 // AI 서비스 초기화
 aiService.initialize();
 

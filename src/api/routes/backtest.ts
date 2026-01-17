@@ -6,35 +6,135 @@ import {
   type BacktestConfig,
   type CandleData,
 } from "../../modules/backtest/backtest.service";
+import { loadCandlesFromDB } from "../../modules/backtest/data-loader";
 import { getInfoClient } from "../../modules/exchange/hyperliquid.client";
+import { presetService } from "../../modules/strategy/preset.service";
+import type { StrategyType } from "../../types";
+
+// ============================================
+// 공통 Enum 스키마 정의
+// ============================================
+
+const StrategyTypeEnum = t.Union(
+  [
+    t.Literal("grid_bot"),
+    t.Literal("momentum"),
+    t.Literal("scalping"),
+    t.Literal("funding_arb"),
+  ],
+  { default: "momentum", description: "전략 타입" }
+);
+
+const PresetNameEnum = t.Union(
+  [
+    t.Literal("recommended"),
+    t.Literal("conservative"),
+    t.Literal("aggressive"),
+  ],
+  { default: "recommended", description: "프리셋 이름" }
+);
+
+const SymbolEnum = t.Union(
+  [
+    t.Literal("BTC"),
+    t.Literal("ETH"),
+    t.Literal("SOL"),
+    t.Literal("ARB"),
+    t.Literal("DOGE"),
+  ],
+  { default: "BTC", description: "거래 심볼" }
+);
+
+const DataSourceEnum = t.Union([t.Literal("real"), t.Literal("simulated")]);
 
 // ============================================
 // 스키마 정의
 // ============================================
 
 const GridBotBacktestSchema = t.Object({
-  symbol: t.String({ default: "BTC" }),
-  days: t.Number({ minimum: 1, maximum: 365, default: 30 }),
-  initialCapital: t.Number({ minimum: 100, default: 1000 }),
-  upperPrice: t.Number(),
-  lowerPrice: t.Number(),
-  gridCount: t.Number({ minimum: 5, maximum: 50, default: 10 }),
-  leverage: t.Number({ minimum: 1, maximum: 10, default: 3 }),
-  stopLossPercent: t.Number({ minimum: 1, maximum: 20, default: 5 }),
-  useRealData: t.Optional(t.Boolean({ default: false })),
+  symbol: SymbolEnum,
+  days: t.Number({
+    minimum: 1,
+    maximum: 365,
+    default: 30,
+    description: "백테스트 기간 (일)",
+  }),
+  initialCapital: t.Number({
+    minimum: 100,
+    default: 1000,
+    description: "초기 자본금 ($)",
+  }),
+  upperPrice: t.Number({ description: "그리드 상한가" }),
+  lowerPrice: t.Number({ description: "그리드 하한가" }),
+  gridCount: t.Number({
+    minimum: 5,
+    maximum: 50,
+    default: 10,
+    description: "그리드 개수",
+  }),
+  leverage: t.Number({
+    minimum: 1,
+    maximum: 10,
+    default: 3,
+    description: "레버리지",
+  }),
+  stopLossPercent: t.Number({
+    minimum: 1,
+    maximum: 20,
+    default: 5,
+    description: "손절 (%)",
+  }),
+  useRealData: t.Optional(
+    t.Boolean({ default: false, description: "실제 데이터 사용 여부" })
+  ),
 });
 
 const MomentumBacktestSchema = t.Object({
-  symbol: t.String({ default: "BTC" }),
-  days: t.Number({ minimum: 1, maximum: 365, default: 30 }),
-  initialCapital: t.Number({ minimum: 100, default: 1000 }),
-  leverage: t.Number({ minimum: 1, maximum: 10, default: 3 }),
-  stopLossPercent: t.Number({ minimum: 1, maximum: 10, default: 2 }),
-  takeProfitPercent: t.Number({ minimum: 2, maximum: 20, default: 5 }),
-  trailingStopPercent: t.Number({ minimum: 0.5, maximum: 5, default: 2 }),
-  rsiOversold: t.Optional(t.Number({ default: 30 })),
-  rsiOverbought: t.Optional(t.Number({ default: 70 })),
-  useRealData: t.Optional(t.Boolean({ default: false })),
+  symbol: SymbolEnum,
+  days: t.Number({
+    minimum: 1,
+    maximum: 365,
+    default: 30,
+    description: "백테스트 기간 (일)",
+  }),
+  initialCapital: t.Number({
+    minimum: 100,
+    default: 1000,
+    description: "초기 자본금 ($)",
+  }),
+  leverage: t.Number({
+    minimum: 1,
+    maximum: 10,
+    default: 3,
+    description: "레버리지",
+  }),
+  stopLossPercent: t.Number({
+    minimum: 1,
+    maximum: 10,
+    default: 2,
+    description: "손절 (%)",
+  }),
+  takeProfitPercent: t.Number({
+    minimum: 2,
+    maximum: 20,
+    default: 5,
+    description: "익절 (%)",
+  }),
+  trailingStopPercent: t.Number({
+    minimum: 0.5,
+    maximum: 5,
+    default: 2,
+    description: "트레일링스탑 (%)",
+  }),
+  rsiOversold: t.Optional(
+    t.Number({ default: 30, description: "RSI 과매도 기준" })
+  ),
+  rsiOverbought: t.Optional(
+    t.Number({ default: 70, description: "RSI 과매수 기준" })
+  ),
+  useRealData: t.Optional(
+    t.Boolean({ default: false, description: "실제 데이터 사용 여부" })
+  ),
 });
 
 // ============================================
@@ -359,6 +459,213 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         tags: ["Backtest"],
         summary: "히스토리 캔들 조회",
         description: "Hyperliquid에서 히스토리 캔들 데이터 조회",
+      },
+    }
+  )
+
+  // 프리셋 기반 백테스트 (권장!)
+  .post(
+    "/run",
+    async ({ body, set }) => {
+      const {
+        strategyType,
+        symbol,
+        preset,
+        days,
+        initialCapital,
+        useRealData,
+      } = body;
+
+      // 프리셋 로드
+      const presetData = await presetService.getPreset(
+        strategyType as StrategyType,
+        preset,
+        symbol
+      );
+
+      if (!presetData) {
+        set.status = 404;
+        return {
+          error: "Preset not found",
+          hint: "Use GET /backtest/presets/:strategyType to see available presets",
+        };
+      }
+
+      // 캔들 데이터 로드
+      let candles: CandleData[];
+      if (useRealData) {
+        try {
+          candles = await fetchHistoricalCandles(symbol, days);
+        } catch {
+          // DB에서 시도
+          const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+          const endDate = new Date();
+          candles = await loadCandlesFromDB({ symbol, startDate, endDate });
+
+          if (candles.length === 0) {
+            candles = generateSampleCandles(days, 95000);
+          }
+        }
+      } else {
+        candles = generateSampleCandles(days, 95000);
+      }
+
+      // Grid Bot용 가격 범위 자동 계산
+      let gridParams = { ...presetData.params };
+      if (strategyType === "grid_bot" && candles.length > 0) {
+        const firstPrice = candles[0].close;
+        const lastPrice = candles[candles.length - 1].close;
+        const avgPrice = (firstPrice + lastPrice) / 2;
+
+        // 프리셋에 없으면 ±5% 범위로 자동 설정
+        if (!gridParams.upperPrice) {
+          gridParams.upperPrice = avgPrice * 1.05;
+        }
+        if (!gridParams.lowerPrice) {
+          gridParams.lowerPrice = avgPrice * 0.95;
+        }
+      }
+
+      // 백테스트 설정 구성
+      const config: BacktestConfig = {
+        symbol,
+        startDate: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
+        endDate: new Date(),
+        initialCapital,
+        strategyType: strategyType === "grid_bot" ? "grid_bot" : "momentum",
+        strategyParams: {
+          symbol,
+          totalCapital: initialCapital,
+          // 기본값 (프리셋에서 덮어쓰기)
+          bbStdDev: 2,
+          trailingStopPercent: 2,
+          ...gridParams,
+        } as any, // 프리셋에서 동적으로 로드되므로 유연하게 처리
+      };
+
+      const startTime = Date.now();
+      const result = runBacktest(config, candles);
+      const executionTime = Date.now() - startTime;
+
+      // 프리셋 통계 업데이트
+      await presetService.updatePresetFromBacktest(presetData.id, {
+        totalReturnPercent: result.totalReturnPercent,
+        winRate: result.winRate,
+      });
+
+      return {
+        strategy: strategyType,
+        preset: preset,
+        presetDescription: presetData.description,
+        dataSource: useRealData ? "real" : "simulated",
+        candleCount: candles.length,
+        executionTimeMs: executionTime,
+        appliedParams: presetData.params,
+        performance: {
+          startBalance: result.startBalance,
+          endBalance: result.endBalance,
+          totalReturn: result.totalReturn,
+          totalReturnPercent: result.totalReturnPercent,
+          maxDrawdownPercent: result.maxDrawdownPercent,
+          sharpeRatio: result.sharpeRatio,
+        },
+        trades: {
+          total: result.totalTrades,
+          wins: result.winCount,
+          losses: result.lossCount,
+          winRate: result.winRate,
+          profitFactor: result.profitFactor,
+        },
+        presetStats: {
+          avgReturn: presetData.avgReturn,
+          avgWinRate: presetData.avgWinRate,
+          aiConfidence: presetData.aiConfidence,
+        },
+        recentTrades: result.trades.slice(-5),
+      };
+    },
+    {
+      body: t.Object({
+        strategyType: StrategyTypeEnum,
+        symbol: SymbolEnum,
+        preset: PresetNameEnum,
+        days: t.Number({
+          minimum: 7,
+          maximum: 365,
+          default: 30,
+          description: "백테스트 기간 (일)",
+        }),
+        initialCapital: t.Number({
+          minimum: 100,
+          default: 1000,
+          description: "초기 자본금 ($)",
+        }),
+        useRealData: t.Boolean({
+          default: false,
+          description: "실제 시장 데이터 사용",
+        }),
+      }),
+      detail: {
+        tags: ["Backtest"],
+        summary: "프리셋 기반 백테스트 (권장)",
+        description:
+          "권장 프리셋으로 간편하게 백테스트 실행. 전략/프리셋/심볼 드롭다운에서 선택.",
+      },
+    }
+  )
+
+  // 프리셋 목록 조회
+  .get(
+    "/presets/:strategyType",
+    async ({ params }) => {
+      const presets = await presetService.getPresetsByType(
+        params.strategyType as StrategyType
+      );
+
+      return {
+        strategyType: params.strategyType,
+        count: presets.length,
+        presets: presets.map((p) => ({
+          name: p.name,
+          description: p.description,
+          isDefault: p.isDefault,
+          params: p.params,
+          stats: {
+            avgReturn: p.avgReturn,
+            avgWinRate: p.avgWinRate,
+            aiConfidence: p.aiConfidence,
+          },
+        })),
+      };
+    },
+    {
+      params: t.Object({
+        strategyType: t.String(),
+      }),
+      detail: {
+        tags: ["Backtest"],
+        summary: "프리셋 목록 조회",
+        description: "전략 타입별 사용 가능한 프리셋 목록",
+      },
+    }
+  )
+
+  // 프리셋 시드 (초기화)
+  .post(
+    "/presets/seed",
+    async () => {
+      const count = await presetService.seedDefaultPresets();
+      return {
+        success: true,
+        seeded: count,
+        message: `${count} default presets initialized`,
+      };
+    },
+    {
+      detail: {
+        tags: ["Backtest"],
+        summary: "기본 프리셋 시드",
+        description: "모든 전략의 기본 프리셋을 DB에 초기화",
       },
     }
   );

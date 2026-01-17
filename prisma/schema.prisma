@@ -192,3 +192,30 @@ model ExternalDataCache {
   @@unique([source, dataType, key])
   @@index([expiresAt])
 }
+
+// ============================================
+// 전략 프리셋 (권장 파라미터)
+// ============================================
+model StrategyPreset {
+  id            String   @id @default(cuid())
+  name          String   // "recommended", "aggressive", "conservative"
+  strategyType  String   // grid_bot, momentum, scalping, funding_arb
+  symbol        String   // BTC, ETH, etc. ("*" for all symbols)
+  paramsJson    String   // 권장 파라미터 JSON
+  description   String?  // 프리셋 설명
+  
+  // AI 피드백 관련
+  backtestCount Int      @default(0)  // 이 프리셋으로 실행된 백테스트 수
+  avgReturn     Float    @default(0)  // 평균 수익률
+  avgWinRate    Float    @default(0)  // 평균 승률
+  lastOptimized DateTime?             // AI가 마지막으로 최적화한 시간
+  aiConfidence  Float    @default(0.5) // AI 신뢰도 (0-1)
+  
+  isDefault     Boolean  @default(false) // 기본 프리셋 여부
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([name, strategyType, symbol])
+  @@index([strategyType])
+  @@index([symbol])
+}
