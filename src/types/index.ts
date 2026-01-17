@@ -24,7 +24,7 @@ export interface TradeResult {
 export interface TradingStrategy {
   start(): void;
   stop(): void;
-  onPriceUpdate(currentPrice: number): any;
+  onPriceUpdate(currentPrice: number): any | Promise<any>;
   getStats(): StrategyStats;
   getConfig(): any;
   initializeGrids?(): any;

@@ -1,6 +1,6 @@
 import { prisma } from "@db/prisma";
 import type { CandleCache } from "@generated/prisma/client";
-import { getInfoClient } from "../modules/exchange/hyperliquid.client";
+import { getInfoClient } from "../modules/hyperliquid";
 
 // 수집할 심볼 목록
 const SYMBOLS = ["BTC", "ETH", "SOL"];

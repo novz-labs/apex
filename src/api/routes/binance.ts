@@ -12,8 +12,6 @@ import {
   BinancePlaceOrderSchema,
   BinancePositionSchema,
   BinancePriceSchema,
-} from "../../modules/exchange/binance.model";
-import {
   cancelAllOrders,
   cancelOrder,
   getAccountInfo,
@@ -25,7 +23,7 @@ import {
   getPositions,
   getPrice,
   placeOrder,
-} from "../../modules/exchange/binance.service";
+} from "../../modules/binance";
 
 export const binanceRoutes = new Elysia({ prefix: "/binance" })
   // ============================================

@@ -308,12 +308,43 @@ export class MomentumStrategy {
     return { ...this.currentPosition };
   }
 
-  onPriceUpdate(currentPrice: number): {
-    action: "hold" | "tp" | "sl" | "trailing_updated";
+  async onPriceUpdate(currentPrice: number): Promise<{
+    action: "hold" | "tp" | "sl" | "trailing_updated" | "open";
     position: MomentumPosition | null;
     closedPnl?: number;
-  } {
+    signal?: MomentumSignal;
+  }> {
+    if (!this.isRunning) {
+      return { action: "hold", position: null };
+    }
     if (!this.currentPosition) {
+      // TODO: 실제 인디케이터 데이터 연동 필요
+      const mockIndicators: IndicatorSnapshot = {
+        rsi: 25,
+        bbPosition: "within",
+        bbUpper: currentPrice + 100,
+        bbMiddle: currentPrice,
+        bbLower: currentPrice - 100,
+        adx: 30,
+        plusDI: 20,
+        minusDI: 15,
+        ema20: currentPrice,
+        ema50: currentPrice,
+        ema100: currentPrice,
+        macdCrossover: "none",
+        macdLine: 0,
+        signalLine: 0,
+        macdHistogram: 0,
+      };
+
+      const signal = this.generateSignal(mockIndicators, currentPrice);
+
+      // 강력한 시그널 (신뢰도 0.6 이상)인 경우에만 진입 시도
+      if (signal.direction !== "none" && signal.confidence >= 0.6) {
+        const position = this.openPosition(signal);
+        return { action: "open", position, signal };
+      }
+
       return { action: "hold", position: null };
     }
 

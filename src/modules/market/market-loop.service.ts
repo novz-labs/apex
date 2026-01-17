@@ -166,7 +166,7 @@ class MarketLoopService {
     if (!instance || !instance.enabled) return;
 
     try {
-      const result = instance.strategy.onPriceUpdate(price);
+      const result = await instance.strategy.onPriceUpdate(price);
 
       // === GridBot 액션 처리 ===
       if (result.executedOrders && result.executedOrders.length > 0) {
@@ -188,18 +188,45 @@ class MarketLoopService {
         await strategyService.toggleStrategy(strategyId, false);
       }
 
-      // === Momentum/Scalping TP/SL 처리 ===
+      // === Momentum/Scalping/Arb 액션 처리 ===
       if (
         result.action &&
         result.action !== "hold" &&
         result.action !== "none" &&
+        result.action !== "trailing_updated" &&
         result.action !== "updated"
       ) {
-        if (result.action === "tp" || result.action === "sl") {
+        const side =
+          result.action === "open"
+            ? result.position?.direction
+            : result.position?.direction === "long"
+              ? "sell"
+              : "buy";
+        const orderSide = side === "long" || side === "buy" ? "buy" : "sell";
+
+        if (result.action === "open" && result.position) {
           console.log(
-            `📤 [${strategyId}] Position closed: ${result.action.toUpperCase()}, PnL: $${result.closedPnl?.toFixed(2) ?? 0}`
+            `🚀 [${strategyId}] Opening position: ${result.position.direction.toUpperCase()} @ ${price}`
           );
-          // 여기서 ExecutionService로 실제 청산 주문 전송 가능
+          await executionService.executeOrder({
+            symbol,
+            side: orderSide,
+            size: result.position.size,
+            strategyId,
+            reason: `Strategy Open: ${result.signal?.reasons?.join(", ") || "Signal"}`,
+          });
+        } else if (result.action === "tp" || result.action === "sl") {
+          console.log(
+            `📤 [${strategyId}] Closing position: ${result.action.toUpperCase()}, PnL: $${result.closedPnl?.toFixed(2) ?? 0}`
+          );
+
+          await executionService.executeOrder({
+            symbol,
+            side: orderSide,
+            size: result.position?.size || 0, // Scalping uses 'size', Momentum uses 'size'
+            strategyId,
+            reason: `Strategy Close: ${result.action.toUpperCase()} @ ${price}`,
+          });
         }
       }
 

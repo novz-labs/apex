@@ -1,10 +1,7 @@
 // src/modules/config/api-validator.ts
 
-import {
-  publicRequest,
-  syncServerTime as syncBinanceTime,
-} from "../exchange/binance.client";
-import * as hyperliquidClient from "../exchange/hyperliquid.client";
+import { publicRequest, syncServerTime as syncBinanceTime } from "../binance";
+import * as hyperliquidClient from "../hyperliquid";
 
 // ============================================
 // API Key Validation

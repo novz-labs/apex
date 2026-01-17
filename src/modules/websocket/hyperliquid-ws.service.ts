@@ -1,6 +1,6 @@
 // src/modules/websocket/hyperliquid-ws.service.ts
 
-import { getSubscriptionClient } from "../exchange/hyperliquid.client";
+import { getSubscriptionClient } from "../hyperliquid";
 
 // ============================================
 // 타입 정의

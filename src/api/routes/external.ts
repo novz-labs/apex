@@ -2,6 +2,7 @@
 import { Elysia, t } from "elysia";
 import * as CoinGecko from "../../modules/external/coingecko.service";
 import * as DeFiLlama from "../../modules/external/defillama.service";
+import * as GoogleTrends from "../../modules/external/google-trends.service";
 import * as Sentiment from "../../modules/external/sentiment.service";
 
 // ============================================
@@ -240,6 +241,76 @@ export const externalRoutes = new Elysia({ prefix: "/external" })
         tags: ["External - Sentiment"],
         summary: "Fear & Greed 히스토리",
         description: "과거 공포/탐욕 지수 히스토리 조회",
+      },
+    }
+  )
+
+  // ============================================
+  // Google Trends (SerpAPI)
+  // ============================================
+
+  .get(
+    "/trends/crypto",
+    async () => {
+      const data = await GoogleTrends.getCryptoTrend();
+      if (!data) {
+        return { error: "Failed to fetch trends. Check SERPAPI_KEY." };
+      }
+      return data;
+    },
+    {
+      detail: {
+        tags: ["External - Trends"],
+        summary: "크립토 검색 트렌드",
+        description:
+          "Bitcoin, Ethereum, Crypto 키워드 검색 트렌드 및 시장 센티먼트",
+      },
+    }
+  )
+
+  .get(
+    "/trends/compare",
+    async ({ query }) => {
+      const keywords = query.keywords.split(",").map((k: string) => k.trim());
+      const data = await GoogleTrends.compareTrends(keywords);
+      if (!data) {
+        return { error: "Failed to compare trends" };
+      }
+      return data;
+    },
+    {
+      query: t.Object({
+        keywords: t.String({
+          description:
+            "비교할 키워드들 (쉼표 구분, 예: bitcoin,ethereum,solana)",
+        }),
+      }),
+      detail: {
+        tags: ["External - Trends"],
+        summary: "트렌드 비교",
+        description: "여러 키워드의 검색 트렌드 비교",
+      },
+    }
+  )
+
+  .get(
+    "/trends/:symbol",
+    async ({ params, set }) => {
+      const data = await GoogleTrends.getCoinSearchTrend(params.symbol);
+      if (!data) {
+        set.status = 404;
+        return { error: "Failed to fetch trend for symbol" };
+      }
+      return data;
+    },
+    {
+      params: t.Object({
+        symbol: t.String({ description: "코인 심볼 (예: BTC, SOL, doge)" }),
+      }),
+      detail: {
+        tags: ["External - Trends"],
+        summary: "코인별 검색 트렌드",
+        description: "특정 코인의 Google 검색 트렌드 분석",
       },
     }
   );

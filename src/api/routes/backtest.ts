@@ -7,7 +7,7 @@ import {
   type CandleData,
 } from "../../modules/backtest/backtest.service";
 import { loadCandlesFromDB } from "../../modules/backtest/data-loader";
-import { getInfoClient } from "../../modules/exchange/hyperliquid.client";
+import { getInfoClient } from "../../modules/hyperliquid";
 import { presetService } from "../../modules/strategy/preset.service";
 import type { StrategyType } from "../../types";
 
@@ -84,9 +84,6 @@ const GridBotBacktestSchema = t.Object({
     default: 5,
     description: "손절 (%)",
   }),
-  useRealData: t.Optional(
-    t.Boolean({ default: false, description: "실제 데이터 사용 여부" })
-  ),
 });
 
 const MomentumBacktestSchema = t.Object({
@@ -131,9 +128,6 @@ const MomentumBacktestSchema = t.Object({
   ),
   rsiOverbought: t.Optional(
     t.Number({ default: 70, description: "RSI 과매수 기준" })
-  ),
-  useRealData: t.Optional(
-    t.Boolean({ default: false, description: "실제 데이터 사용 여부" })
   ),
 });
 
@@ -190,16 +184,11 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
     async ({ body }) => {
       let candles: CandleData[];
 
-      if (body.useRealData) {
-        try {
-          candles = await fetchHistoricalCandles(body.symbol, body.days);
-        } catch {
-          candles = generateSampleCandles(
-            body.days,
-            (body.upperPrice + body.lowerPrice) / 2
-          );
-        }
-      } else {
+      // 항상 실제 데이터 사용
+      try {
+        candles = await fetchHistoricalCandles(body.symbol, body.days);
+      } catch {
+        // Fallback: 샘플 데이터 (실제 데이터 실패 시)
         candles = generateSampleCandles(
           body.days,
           (body.upperPrice + body.lowerPrice) / 2
@@ -229,7 +218,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
 
       return {
         strategy: "grid_bot",
-        dataSource: body.useRealData ? "real" : "simulated",
+        dataSource: "real",
         candleCount: candles.length,
         executionTimeMs: executionTime,
         config: {
@@ -276,13 +265,11 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
     async ({ body }) => {
       let candles: CandleData[];
 
-      if (body.useRealData) {
-        try {
-          candles = await fetchHistoricalCandles(body.symbol, body.days);
-        } catch {
-          candles = generateSampleCandles(body.days, 95000);
-        }
-      } else {
+      // 항상 실제 데이터 사용
+      try {
+        candles = await fetchHistoricalCandles(body.symbol, body.days);
+      } catch {
+        // Fallback: 샘플 데이터
         candles = generateSampleCandles(body.days, 95000);
       }
 
@@ -312,7 +299,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
 
       return {
         strategy: "momentum",
-        dataSource: body.useRealData ? "real" : "simulated",
+        dataSource: "real",
         candleCount: candles.length,
         executionTimeMs: executionTime,
         config: {
@@ -467,14 +454,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
   .post(
     "/run",
     async ({ body, set }) => {
-      const {
-        strategyType,
-        symbol,
-        preset,
-        days,
-        initialCapital,
-        useRealData,
-      } = body;
+      const { strategyType, symbol, preset, days, initialCapital } = body;
 
       // 프리셋 로드
       const presetData = await presetService.getPreset(
@@ -491,23 +471,20 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         };
       }
 
-      // 캔들 데이터 로드
+      // 항상 실제 데이터 사용
       let candles: CandleData[];
-      if (useRealData) {
-        try {
-          candles = await fetchHistoricalCandles(symbol, days);
-        } catch {
-          // DB에서 시도
-          const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-          const endDate = new Date();
-          candles = await loadCandlesFromDB({ symbol, startDate, endDate });
+      try {
+        candles = await fetchHistoricalCandles(symbol, days);
+      } catch {
+        // DB에서 시도
+        const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        const endDate = new Date();
+        candles = await loadCandlesFromDB({ symbol, startDate, endDate });
 
-          if (candles.length === 0) {
-            candles = generateSampleCandles(days, 95000);
-          }
+        if (candles.length === 0) {
+          // 최후 fallback: 샘플 데이터
+          candles = generateSampleCandles(days, 95000);
         }
-      } else {
-        candles = generateSampleCandles(days, 95000);
       }
 
       // Grid Bot용 가격 범위 자동 계산
@@ -557,7 +534,7 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
         strategy: strategyType,
         preset: preset,
         presetDescription: presetData.description,
-        dataSource: useRealData ? "real" : "simulated",
+        dataSource: "real",
         candleCount: candles.length,
         executionTimeMs: executionTime,
         appliedParams: presetData.params,
@@ -599,10 +576,6 @@ export const backtestRoutes = new Elysia({ prefix: "/backtest" })
           minimum: 100,
           default: 1000,
           description: "초기 자본금 ($)",
-        }),
-        useRealData: t.Boolean({
-          default: false,
-          description: "실제 시장 데이터 사용",
         }),
       }),
       detail: {

@@ -5,8 +5,8 @@ import {
   aiRoutes,
   backtestRoutes,
   binanceRoutes,
-  exchangeRoutes,
   externalRoutes,
+  hyperliquidRoutes,
   initializeJobs,
   jobsRoutes,
   strategyRoutes,
@@ -66,7 +66,7 @@ const app = new Elysia()
   )
 
   // Routes
-  .use(exchangeRoutes)
+  .use(hyperliquidRoutes)
   .use(binanceRoutes)
   .use(strategyRoutes)
   .use(backtestRoutes)

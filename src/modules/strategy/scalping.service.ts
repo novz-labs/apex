@@ -246,11 +246,17 @@ export class ScalpingStrategy implements TradingStrategy {
     entryPrice: number,
     reason?: string
   ): ScalpTrade {
-    const { takeProfitPercent, stopLossPercent, totalCapital, leverage, positionSizePercent } =
-      this.config;
+    const {
+      takeProfitPercent,
+      stopLossPercent,
+      totalCapital,
+      leverage,
+      positionSizePercent,
+    } = this.config;
 
     // 포지션 크기 계산
-    const positionValue = (totalCapital * positionSizePercent / 100) * leverage;
+    const positionValue =
+      ((totalCapital * positionSizePercent) / 100) * leverage;
     const size = positionValue / entryPrice;
 
     // TP/SL 가격 계산
@@ -294,16 +300,41 @@ export class ScalpingStrategy implements TradingStrategy {
   // 가격 업데이트 (TP/SL 체크)
   // ============================================
 
-  onPriceUpdate(currentPrice: number): {
-    action: "hold" | "tp" | "sl" | "none";
+  async onPriceUpdate(currentPrice: number): Promise<{
+    action: "hold" | "tp" | "sl" | "none" | "open";
     position: ScalpTrade | null;
     closedPnl?: number;
-  } {
+    signal?: any;
+  }> {
     if (!this.isRunning) {
       return { action: "none", position: null };
     }
 
     if (!this.currentPosition) {
+      // 실시간 인디케이터 계산 로직 (DB 연동)
+      // TODO: 실제 bid/ask 가격 연동 필요 (현재는 currentPrice 기준)
+      const indicators = await indicatorService.getScalpingIndicators(
+        this.config.symbol,
+        "1m",
+        currentPrice,
+        currentPrice - 0.01,
+        currentPrice + 0.01
+      );
+
+      if (!indicators) {
+        return { action: "hold", position: null };
+      }
+
+      const signal = this.checkEntry(indicators);
+      if (signal.canTrade && signal.side) {
+        const position = this.openPosition(
+          signal.side,
+          currentPrice,
+          signal.reason
+        );
+        return { action: "open", position, signal };
+      }
+
       return { action: "hold", position: null };
     }
 
@@ -345,7 +376,11 @@ export class ScalpingStrategy implements TradingStrategy {
     closedPnl: number;
   } {
     if (!this.currentPosition) {
-      return { action: reason === "tp" ? "tp" : "sl", position: null, closedPnl: 0 };
+      return {
+        action: reason === "tp" ? "tp" : "sl",
+        position: null,
+        closedPnl: 0,
+      };
     }
 
     const { side, entryPrice, size, entryTime } = this.currentPosition;
@@ -368,7 +403,10 @@ export class ScalpingStrategy implements TradingStrategy {
     this.totalPnL += pnl;
 
     const emoji = reason === "tp" ? "✅" : "❌";
-    const pnlPercent = ((exitPrice - entryPrice) / entryPrice) * 100 * (side === "long" ? 1 : -1);
+    const pnlPercent =
+      ((exitPrice - entryPrice) / entryPrice) *
+      100 *
+      (side === "long" ? 1 : -1);
 
     console.log(
       `${emoji} Scalp ${reason.toUpperCase()} @ $${exitPrice.toFixed(2)}`
@@ -410,7 +448,9 @@ export class ScalpingStrategy implements TradingStrategy {
     this.resetDailyStats();
     console.log(`⚡ Scalping Strategy started for ${this.config.symbol}`);
     console.log(`   Max daily trades: ${this.config.maxDailyTrades}`);
-    console.log(`   TP: ${this.config.takeProfitPercent}% | SL: ${this.config.stopLossPercent}%`);
+    console.log(
+      `   TP: ${this.config.takeProfitPercent}% | SL: ${this.config.stopLossPercent}%`
+    );
   }
 
   stop(): void {
@@ -428,7 +468,9 @@ export class ScalpingStrategy implements TradingStrategy {
     this.resetDailyStats();
 
     const todayWins = this.todayTrades.filter((t) => t.status === "won").length;
-    const todayLosses = this.todayTrades.filter((t) => t.status === "lost").length;
+    const todayLosses = this.todayTrades.filter(
+      (t) => t.status === "lost"
+    ).length;
 
     const allWins = this.allTrades.filter((t) => t.status === "won");
     const allLosses = this.allTrades.filter((t) => t.status === "lost");
@@ -462,7 +504,9 @@ export class ScalpingStrategy implements TradingStrategy {
       todayLosses,
       remainingTrades: this.config.maxDailyTrades - this.todayTrades.length,
       averageHoldingTime: avgHoldingTime,
-      currentPosition: this.currentPosition ? { ...this.currentPosition } : null,
+      currentPosition: this.currentPosition
+        ? { ...this.currentPosition }
+        : null,
     };
   }
 
@@ -483,7 +527,9 @@ export class ScalpingStrategy implements TradingStrategy {
 // 팩토리 함수 & 기본 설정
 // ============================================
 
-export function createScalpingStrategy(config: ScalpingConfig): ScalpingStrategy {
+export function createScalpingStrategy(
+  config: ScalpingConfig
+): ScalpingStrategy {
   return new ScalpingStrategy(config);
 }
 

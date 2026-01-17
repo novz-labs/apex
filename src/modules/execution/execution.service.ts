@@ -1,7 +1,7 @@
 // src/modules/execution/execution.service.ts
 
-import * as binanceService from "../exchange/binance.service";
-import * as hyperliquidService from "../exchange/hyperliquid.service";
+import * as binanceService from "../binance";
+import * as hyperliquidService from "../hyperliquid";
 import { telegramService } from "../notification/telegram.service";
 import { closeTrade, createTrade } from "../trade/trade.service";
 
