@@ -365,3 +365,275 @@ export async function cancelAllOrders(symbol: string) {
 export function getNetwork() {
   return getClientNetworkInfo();
 }
+
+// ============================================
+// 지갑 조회 및 이체
+// ============================================
+
+/**
+ * Spot 지갑 잔고 조회
+ */
+export async function getSpotBalance(asset: string = "USDT") {
+  const data = await spotPrivateRequest<{
+    balances: Array<{
+      asset: string;
+      free: string;
+      locked: string;
+    }>;
+  }>("GET", "/api/v3/account");
+
+  const balance = data.balances.find((b) => b.asset === asset);
+
+  return {
+    asset,
+    free: balance ? parseFloat(balance.free) : 0,
+    locked: balance ? parseFloat(balance.locked) : 0,
+    total: balance ? parseFloat(balance.free) + parseFloat(balance.locked) : 0,
+  };
+}
+
+/**
+ * 모든 지갑 잔고 조회 (Spot, Futures, Earn 등)
+ */
+export async function getAllBalances(asset: string = "USDT") {
+  const [spot, futures] = await Promise.all([
+    getSpotBalance(asset),
+    getAccountInfo(),
+  ]);
+
+  const futuresBalance = futures.assets.find((a) => a.asset === asset);
+
+  return {
+    asset,
+    spot: spot.free,
+    futures: futuresBalance ? parseFloat(futuresBalance.availableBalance) : 0,
+    total:
+      spot.free +
+      (futuresBalance ? parseFloat(futuresBalance.availableBalance) : 0),
+  };
+}
+
+/**
+ * 지갑 간 자금 이체
+ *
+ * Transfer Types:
+ * - MAIN_UMFUTURE: Spot → USDT-M Futures
+ * - UMFUTURE_MAIN: USDT-M Futures → Spot
+ * - MAIN_CMFUTURE: Spot → COIN-M Futures
+ * - CMFUTURE_MAIN: COIN-M Futures → Spot
+ * - MAIN_MARGIN: Spot → Margin (Cross)
+ * - MARGIN_MAIN: Margin (Cross) → Spot
+ */
+export async function internalTransfer(params: {
+  asset: string;
+  amount: number;
+  type:
+    | "MAIN_UMFUTURE"
+    | "UMFUTURE_MAIN"
+    | "MAIN_CMFUTURE"
+    | "CMFUTURE_MAIN"
+    | "MAIN_MARGIN"
+    | "MARGIN_MAIN";
+}) {
+  const { asset, amount, type } = params;
+
+  console.log(`💸 [Binance] Transfer: ${amount} ${asset} (${type})`);
+
+  const result = await spotPrivateRequest<{ tranId: number }>(
+    "POST",
+    "/sapi/v1/asset/transfer",
+    {
+      asset,
+      amount: amount.toString(),
+      type,
+    }
+  );
+
+  return {
+    success: true,
+    tranId: result.tranId,
+    asset,
+    amount,
+    type,
+  };
+}
+
+/**
+ * Spot → USDT-M Futures 이체 (단축)
+ */
+export async function transferToFutures(asset: string, amount: number) {
+  return internalTransfer({
+    asset,
+    amount,
+    type: "MAIN_UMFUTURE",
+  });
+}
+
+/**
+ * USDT-M Futures → Spot 이체 (단축)
+ */
+export async function transferToSpot(asset: string, amount: number) {
+  return internalTransfer({
+    asset,
+    amount,
+    type: "UMFUTURE_MAIN",
+  });
+}
+
+// ============================================
+// Earn (Flexible Savings)
+// ============================================
+
+/**
+ * Flexible Earn 잔고 조회
+ */
+export async function getFlexibleEarnBalance(asset: string = "USDT") {
+  try {
+    const data = await spotPrivateRequest<{
+      rows: Array<{
+        asset: string;
+        freeAmount: string;
+        totalAmount: string;
+        lockedAmount: string;
+      }>;
+    }>("GET", "/sapi/v1/simple-earn/flexible/position", {
+      asset,
+    });
+
+    const position = data.rows.find((r) => r.asset === asset);
+
+    return {
+      asset,
+      freeAmount: position ? parseFloat(position.freeAmount) : 0,
+      totalAmount: position ? parseFloat(position.totalAmount) : 0,
+      lockedAmount: position ? parseFloat(position.lockedAmount) : 0,
+    };
+  } catch (error) {
+    // Earn에 자산이 없는 경우
+    return {
+      asset,
+      freeAmount: 0,
+      totalAmount: 0,
+      lockedAmount: 0,
+    };
+  }
+}
+
+/**
+ * Flexible Earn에서 자금 상환 (Spot으로 이동)
+ */
+export async function redeemFlexibleEarn(params: {
+  productId: string;
+  amount?: number; // 없으면 전액 상환
+  redeemAll?: boolean;
+}) {
+  const { productId, amount, redeemAll } = params;
+
+  console.log(
+    `📤 [Binance] Redeem Flexible Earn: ${amount ?? "ALL"} (productId: ${productId})`
+  );
+
+  const requestParams: Record<string, unknown> = {
+    productId,
+  };
+
+  if (redeemAll) {
+    requestParams.redeemAll = true;
+  } else if (amount) {
+    requestParams.amount = amount.toString();
+  }
+
+  const result = await spotPrivateRequest<{
+    redeemId: number;
+    success: boolean;
+  }>("POST", "/sapi/v1/simple-earn/flexible/redeem", requestParams);
+
+  return {
+    success: result.success,
+    redeemId: result.redeemId,
+  };
+}
+
+/**
+ * Flexible Earn 상품 목록 조회
+ */
+export async function getFlexibleEarnProducts(asset?: string) {
+  const params: Record<string, unknown> = {};
+  if (asset) {
+    params.asset = asset;
+  }
+
+  const data = await spotPrivateRequest<{
+    rows: Array<{
+      asset: string;
+      productId: string;
+      latestAnnualPercentageRate: string;
+      canRedeem: boolean;
+    }>;
+  }>("GET", "/sapi/v1/simple-earn/flexible/list", params);
+
+  return data.rows.map((r) => ({
+    asset: r.asset,
+    productId: r.productId,
+    annualRate: parseFloat(r.latestAnnualPercentageRate) * 100, // %로 변환
+    canRedeem: r.canRedeem,
+  }));
+}
+
+/**
+ * 종합: 모든 곳에서 자금 모아서 Futures로 이체
+ */
+export async function consolidateToFutures(
+  asset: string = "USDT",
+  minAmount: number = 10
+): Promise<{
+  fromSpot: number;
+  fromEarn: number;
+  total: number;
+  success: boolean;
+}> {
+  let fromSpot = 0;
+  let fromEarn = 0;
+
+  // 1. Spot 잔고 확인 및 이체
+  const spotBalance = await getSpotBalance(asset);
+  if (spotBalance.free >= minAmount) {
+    await transferToFutures(asset, spotBalance.free);
+    fromSpot = spotBalance.free;
+    console.log(`   ✅ Transferred ${fromSpot} ${asset} from Spot`);
+  }
+
+  // 2. Earn 잔고 확인 및 상환
+  try {
+    const earnBalance = await getFlexibleEarnBalance(asset);
+    if (earnBalance.freeAmount >= minAmount) {
+      const products = await getFlexibleEarnProducts(asset);
+      const product = products.find((p) => p.asset === asset && p.canRedeem);
+
+      if (product) {
+        await redeemFlexibleEarn({
+          productId: product.productId,
+          redeemAll: true,
+        });
+        fromEarn = earnBalance.freeAmount;
+        console.log(`   ✅ Redeemed ${fromEarn} ${asset} from Earn`);
+
+        // Earn → Spot 이동 후 Futures로 이체 (약간의 딜레이 필요할 수 있음)
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const newSpotBalance = await getSpotBalance(asset);
+        if (newSpotBalance.free >= minAmount) {
+          await transferToFutures(asset, newSpotBalance.free);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(`   ⚠️ Earn redemption skipped: ${error}`);
+  }
+
+  return {
+    fromSpot,
+    fromEarn,
+    total: fromSpot + fromEarn,
+    success: true,
+  };
+}

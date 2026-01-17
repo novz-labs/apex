@@ -8,8 +8,10 @@ import {
   getPerformanceSummary,
   getSentimentTrend,
   getSnapshots,
+  runAIOrchestration,
   runCandleCollector,
   runDailySnapshot,
+  runRiskCheck,
   runSentimentUpdater,
   scheduler,
 } from "../../jobs";
@@ -27,6 +29,16 @@ export function initializeJobs(): void {
 
   // 매일 00:00 UTC: 일일 스냅샷
   scheduler.register("daily-snapshot", "0 0 * * *", runDailySnapshot);
+
+  // 매 30분: AI 오케스트레이션 (트리거 조건 체크)
+  scheduler.register("ai-orchestration", "*/30 * * * *", async () => {
+    await runAIOrchestration();
+  });
+
+  // 매 15분: 리스크 체크
+  scheduler.register("risk-check", "*/15 * * * *", async () => {
+    await runRiskCheck();
+  });
 
   // 스케줄러 시작
   scheduler.start();
@@ -64,6 +76,8 @@ export const jobsRoutes = new Elysia({ prefix: "/jobs" })
         "candle-collector",
         "sentiment-updater",
         "daily-snapshot",
+        "ai-orchestration",
+        "risk-check",
       ];
 
       if (!validJobs.includes(params.jobName)) {
@@ -83,6 +97,12 @@ export const jobsRoutes = new Elysia({ prefix: "/jobs" })
             break;
           case "daily-snapshot":
             await runDailySnapshot();
+            break;
+          case "ai-orchestration":
+            await runAIOrchestration();
+            break;
+          case "risk-check":
+            await runRiskCheck();
             break;
         }
 

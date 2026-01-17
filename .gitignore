@@ -47,3 +47,4 @@ package-lock.json
 
 /dashboard
 dev.db
+/prisma/migrations

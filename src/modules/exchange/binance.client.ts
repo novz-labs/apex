@@ -10,6 +10,11 @@ const BASE_URL = isTestnet
   ? "https://testnet.binancefuture.com"
   : "https://fapi.binance.com";
 
+// Spot API for wallet transfers (no testnet for this endpoint)
+const SPOT_BASE_URL = isTestnet
+  ? "https://testnet.binance.vision" // Spot testnet
+  : "https://api.binance.com";
+
 const WS_URL = isTestnet
   ? "wss://fstream.binancefuture.com"
   : "wss://fstream.binance.com";
@@ -117,6 +122,54 @@ export async function privateRequest<T>(
   if (!res.ok) {
     const error = await res.text();
     throw new Error(`Binance API Error: ${res.status} - ${error}`);
+  }
+
+  return res.json();
+}
+
+/**
+ * Spot API Private 요청 (지갑 이체 등)
+ */
+export async function spotPrivateRequest<T>(
+  method: "GET" | "POST" | "DELETE",
+  endpoint: string,
+  params: Record<string, unknown> = {}
+): Promise<T> {
+  const apiKey = process.env.BINANCE_API_KEY;
+  const secretKey = process.env.BINANCE_SECRET_KEY;
+
+  if (!apiKey || !secretKey) {
+    throw new Error("BINANCE_API_KEY and BINANCE_SECRET_KEY are required");
+  }
+
+  const paramsWithTimestamp = {
+    ...params,
+    timestamp: getTimestamp(),
+  };
+
+  const queryString = buildQueryString(paramsWithTimestamp);
+  const signature = createSignature(queryString, secretKey);
+  const signedQueryString = `${queryString}&signature=${signature}`;
+
+  const url =
+    method === "GET"
+      ? `${SPOT_BASE_URL}${endpoint}?${signedQueryString}`
+      : `${SPOT_BASE_URL}${endpoint}`;
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      "X-MBX-APIKEY": apiKey,
+      ...(method !== "GET" && {
+        "Content-Type": "application/x-www-form-urlencoded",
+      }),
+    },
+    ...(method !== "GET" && { body: signedQueryString }),
+  });
+
+  if (!res.ok) {
+    const error = await res.text();
+    throw new Error(`Binance Spot API Error: ${res.status} - ${error}`);
   }
 
   return res.json();

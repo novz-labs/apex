@@ -1,4 +1,5 @@
 // src/jobs/index.ts
+export { runAIOrchestration, runRiskCheck } from "./ai-orchestration.job";
 export {
   getCandleStats,
   getCandles,

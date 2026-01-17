@@ -92,8 +92,27 @@ await strategyService.loadStrategies();
 // AI 서비스 초기화
 aiService.initialize();
 
+// API 키 검증
+import {
+  checkLiveModeRequirements,
+  validateAllApiKeys,
+} from "./modules/config/api-validator";
+const liveCheck = await checkLiveModeRequirements();
+if (!liveCheck.canGoLive && process.env.PAPER_MODE === "false") {
+  console.error("❌ Live mode requirements not met:");
+  liveCheck.missing.forEach((m) => console.error(`   - Missing: ${m}`));
+  process.exit(1);
+}
+liveCheck.warnings.forEach((w) => console.warn(`⚠️ ${w}`));
+await validateAllApiKeys();
+
+// 마켓 루프 시작 (실시간 가격 피드 → 전략)
+import { marketLoopService } from "./modules/market";
+marketLoopService.start();
+
 // Graceful shutdown
 process.on("SIGINT", () => {
   console.log("\n🛑 Shutting down...");
+  marketLoopService.stop();
   process.exit(0);
 });
