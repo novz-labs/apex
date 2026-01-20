@@ -99,12 +99,13 @@ class HyperliquidWebSocketService {
    */
   private async startPriceSubscription(symbol: string): Promise<void> {
     try {
-      const client = getSubscriptionClient() as any;
+      const client = getSubscriptionClient();
       this.subscriptions.add(`price:${symbol}`);
 
-      await client.subscribe({ type: "allMids" }, (data: any) => {
+      // allMids 메서드는 모든 심볼의 가격을 구독합니다
+      await client.allMids((data) => {
         // allMids 응답에서 해당 심볼의 가격 추출
-        const mids = data as Record<string, string>;
+        const mids = data.mids as Record<string, string>;
         const priceStr = mids[symbol];
 
         if (priceStr) {
@@ -132,28 +133,19 @@ class HyperliquidWebSocketService {
    */
   private async startOrderBookSubscription(symbol: string): Promise<void> {
     try {
-      const client = getSubscriptionClient() as any;
+      const client = getSubscriptionClient();
       this.subscriptions.add(`orderbook:${symbol}`);
 
-      await client.subscribe({ type: "l2Book", coin: symbol }, (data: any) => {
-        const bookData = data as {
-          coin: string;
-          levels: [
-            [
-              { px: string; sz: string; n: number }[],
-              { px: string; sz: string; n: number }[],
-            ],
-          ];
-        };
-
+      // l2Book 메서드로 특정 심볼의 오더북 구독
+      await client.l2Book({ coin: symbol }, (data) => {
         const orderBookData: OrderBookData = {
-          symbol: bookData.coin,
-          bids: bookData.levels[0][0].map((l) => ({
+          symbol: data.coin,
+          bids: data.levels[0].map((l) => ({
             price: l.px,
             size: l.sz,
             count: l.n,
           })),
-          asks: bookData.levels[0][1].map((l) => ({
+          asks: data.levels[1].map((l) => ({
             price: l.px,
             size: l.sz,
             count: l.n,
@@ -193,7 +185,7 @@ class HyperliquidWebSocketService {
    */
   private notifyOrderBookSubscribers(
     symbol: string,
-    data: OrderBookData
+    data: OrderBookData,
   ): void {
     const callbacks = this.orderBookCallbacks.get(symbol);
     if (callbacks) {
